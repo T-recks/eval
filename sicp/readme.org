@@ -1,0 +1,1 @@
+This directory contains a fairly literal Common Lisp translation of the interpreters from SICP chapter 4 plus answers and code for most of the exercises. The lisp file is code for the section 4.1 interpreter, tangled from the Org file using Babel.

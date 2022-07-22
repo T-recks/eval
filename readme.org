@@ -1,0 +1,6 @@
+Interpreters, etc., for Lispy languages like Scheme.
+
+- sicp/
+  - implementations of the interpreter and exercise answers from SICP
+- scm/
+  - a scheme interpreter based on the SICP interpreter but modified and extended

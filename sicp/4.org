@@ -1,0 +1,3139 @@
+#+SEQ_TODO: TODO(t) WAITING(w) PLANNED(p) BEGUN(b) | DONE(d) CANCEL(c) FINISHED(f) SUSPENDED(s)
+#+PROPERTY: header-args :results silent :tangle no
+
+#+BEGIN_SRC lisp :tangle yes :noweb yes
+  <<package>>
+  <<data-predicates>>
+  <<syntax>>
+  <<cond->if>>
+  <<data-procedures>>
+  <<data-environments>>
+  <<eval-eval>>
+  <<eval-apply>>
+  <<eval-list-of-values>>
+  <<eval-if>>
+  <<eval-sequence>>
+  <<eval-define-and-set>>
+  <<primitive-procedures>>
+  <<setup-environment>>
+  <<driver-loop>>
+#+END_SRC
+
+Reference for CL packages: [[http://www.gigamonkeys.com/book/programming-in-the-large-packages-and-symbols.html][PCL]].
+
+#+NAME: package
+#+BEGIN_SRC lisp
+  ;; package definition
+  (cl:defpackage :scheme
+    (:nicknames :scm)
+    (:export
+     :eval
+     :apply)
+    (:import-from
+     :cl
+     :quote
+     :&optional :&body :&rest :&key :in-package
+     :defun :funcall :lambda :labels :defparameter :defmacro :setf :defvar :error ; functions, variables, errors
+     :t :nil :equalp :numberp :listp :consp :symbolp :stringp :eq :null ; truth, predicates
+     :cons :car :cdr :cadr :caadr :cdadr :cddr :caddr :cdddr :cadddr ; cons cells
+     :mapcar :progn
+     :+ :* :- :/ :=
+     ))
+
+  (in-package "SCHEME")
+#+END_SRC
+
+* The Metacircular Evaluator
+** The Core of the Evaluator
+:PROPERTIES:
+:header-args: :noweb-ref core
+:END:
+*Eval*
+#+NAME: eval-eval
+#+BEGIN_SRC lisp :noweb-ref eval-eval
+  (defun eval (exp env)
+    (cl:cond ((self-evaluating? exp) exp)
+             ((variable? exp) (lookup-variable-value exp env))
+             ((quoted? exp) (text-of-quotation exp))
+             ((assignment? exp) (eval-assignment exp env))
+             ((definition? exp) (eval-definition exp env))
+             ((if? exp) (eval-if exp env))
+             ((lambda? exp)
+              (make-procedure (lambda-parameters exp)
+                              (lambda-body exp)
+                              env))
+             ((begin? exp)
+              (eval-sequence (begin-actions exp) env))
+             ((cond? exp) (eval (cond->if exp) env))
+             ((application? exp)
+              (apply (eval (operator exp) env)
+                     (list-of-values (operands exp) env)))
+             (t
+              (error "Unknown expression type -- EVAL ~S" exp))))
+#+END_SRC
+
+*Apply*
+#+NAME: eval-apply
+#+BEGIN_SRC lisp :noweb-ref eval-apply
+  (defun apply (procedure arguments)
+    (cl:cond ((primitive-procedure? procedure)
+              (apply-primitive-procedure procedure arguments))
+             ((compound-procedure? procedure)
+              (eval-sequence
+               (procedure-body procedure)
+               (extend-environment
+                (procedure-parameters procedure)
+                arguments
+                (procedure-environment procedure))))
+             (t
+              (error "Unknown procedure type -- APPLY ~S" procedure))))
+#+END_SRC
+
+*Procedure arguments*
+#+NAME: eval-list-of-values
+#+BEGIN_SRC lisp :noweb-ref eval-list-of-values
+  (defun list-of-values (exps env)
+    (cl:if (no-operands? exps)
+           '()
+           (cons (eval (first-operand exps) env)
+                 (list-of-values (rest-operands exps) env))))
+#+END_SRC
+
+*Conditionals*
+#+NAME: eval-if
+#+BEGIN_SRC lisp :noweb-ref eval-if
+  (defun eval-if (exp env)
+    (cl:if (true? (eval (if-predicate exp) env))
+           (eval (if-consequent exp) env)
+           (eval (if-alternative exp) env)))
+#+END_SRC
+
+*Sequences*
+#+NAME: eval-sequence
+#+BEGIN_SRC lisp :noweb-ref eval-sequence
+  (defun eval-sequence (exps env)
+    (cl:cond ((last-exp? exps) (eval (first-exp exps) env))
+             (t (eval (first-exp exps) env)
+                (eval-sequence (rest-exps exps) env))))
+#+END_SRC
+
+*Assignments and definitions*
+#+NAME: eval-define-and-set
+#+BEGIN_SRC lisp :noweb-ref eval-define-and-set
+  (defun eval-assignment (exp env)
+    (set-variable-value! (assignment-variable exp)
+                         (eval (assignment-value exp) env)
+                         env))
+
+  (defun eval-definition (exp env)
+    (define-variable! (definition-variable exp)
+        (eval (definition-value exp) env)
+      env)
+    'ok)
+#+END_SRC
+*** Exercise 4.1
+#+BEGIN_SRC lisp
+  (defun list-of-values-l (exps env)
+    "Left to right."
+    (cl:if (no-operands? exps)
+           '()
+           (cl:let ((val (eval (first-operand exps) env)))
+             (cons val (list-of-values (rest-operands exps) env)))))
+
+  (defun reverse-operands (exps)
+    "Utility. Reuse CL:REVERSE for convenience. This assumes EXPS will be internally represented as a CL list, but we can easily redifine this procedure if that turns out not to be the case; nothing else in our evaluator will need to be redifined."
+    (cl:reverse exps))
+
+  (defun list-of-values-r (exps env)
+    "Right to left."
+    (list-of-values-l (reverse-operands exps) env))
+
+  (cl:setf (symbol-value 'list-of-values) )
+#+END_SRC
+** Representing Expressions
+*** Syntax
+:PROPERTIES:
+:header-args: :noweb-ref syntax
+:END:
+**** Self-evaluation 
+#+BEGIN_SRC lisp
+  ;; begin syntax
+  (defun self-evaluating? (exp)
+    (cl:cond ((numberp exp) t)
+             ((stringp exp) t)
+             ((boolean? exp) t)
+             (t nil)))
+#+END_SRC
+**** Variables
+#+BEGIN_SRC lisp
+  (defun variable? (exp) (symbolp exp))
+#+END_SRC
+**** Quotations
+#+BEGIN_SRC lisp
+  (defun quoted? (exp)
+    (tagged-list? exp 'quote))
+
+  (defun text-of-quotation (exp) (cadr exp))
+
+  (defun tagged-list? (exp tag)
+    (cl:if (consp exp)
+           (eq (car exp) tag)
+           nil))
+#+END_SRC
+**** Assignments
+#+BEGIN_SRC lisp
+  (defun assignment? (exp)
+    (tagged-list? exp 'set!))
+
+  (defun assignment-variable (exp) (cadr exp))
+
+  (defun assignment-value (exp) (caddr exp))
+#+END_SRC
+**** Definitions
+#+BEGIN_SRC lisp
+  (defun definition? (exp)
+    (tagged-list? exp 'define))
+
+  (defun definition-variable (exp)
+    (cl:if (symbolp (cadr exp))
+           (cadr exp)                     ; e.g. (define x ...)
+           (caadr exp)                    ; e.g. (define (x ...) ...)
+           ))
+
+  (defun definition-value (exp)
+    (cl:if (symbolp (cadr exp))
+           (caddr exp)
+           (make-lambda (cdadr exp)       ; formal parameters
+                        (cddr exp))       ; body
+           ))
+#+END_SRC
+**** Lambdas
+#+BEGIN_SRC lisp
+  (defun lambda? (exp) (tagged-list? exp 'lambda))
+
+  (defun lambda-parameters (exp) (cadr exp))
+
+  (defun lambda-body (exp) (cddr exp))
+
+  (defun make-lambda (parameters body)
+    (cons 'lambda (cons parameters body)))
+#+END_SRC
+**** Conditionals
+#+BEGIN_SRC lisp
+  (defun if? (exp) (tagged-list? exp 'if))
+
+  (defun if-predicate (exp) (cadr exp))
+
+  (defun if-consequent (exp) (caddr exp))
+
+  (defun if-alternative (exp)
+    (cl:if (cl:not (null (cdddr exp)))
+           (cadddr exp)
+           false))
+
+  (defun make-if (predicate consequent alternative)
+    (cl:list 'if predicate consequent alternative))
+#+END_SRC
+**** Begin
+#+BEGIN_SRC lisp
+  (defun begin? (exp) (tagged-list? exp 'begin))
+
+  (defun begin-actions (exp) (cdr exp))
+
+  (defun last-exp? (seq) (null (cdr seq)))
+
+  (defun first-exp (seq) (car seq))
+
+  (defun rest-exps (seq) (cdr seq))
+
+  (defun sequence->exp (seq)
+    (cl:cond ((null seq) seq)
+             ((last-exp? seq) (first-exp seq))
+             (t (make-begin seq))))
+
+  (defun make-begin (seq) (cons 'begin seq))
+#+END_SRC
+**** Application 
+#+BEGIN_SRC lisp
+  (defun application? (exp) (consp exp))
+
+  (defun operator (exp) (car exp))
+
+  (defun operands (exp) (cdr exp))
+
+  (defun no-operands? (ops) (null ops))
+
+  (defun first-operand (ops) (car ops))
+
+  (defun rest-operands (ops) (cdr ops))
+  ;; end syntax
+#+END_SRC
+*** Derived expressions
+:PROPERTIES:
+:header-args: :noweb-ref cond->if
+:END:
+#+BEGIN_SRC lisp
+  ;; begin cond->if
+  (defun cond? (exp) (tagged-list? exp 'cond))
+
+  (defun cond-clauses (exp) (cdr exp))
+
+  (defun cond-else-clause? (clause)
+    (eq (cond-predicate clause) 'else))
+
+  (defun cond-predicate (clause) (car clause))
+
+  (defun cond-actions (clause) (cdr clause))
+
+  (defun cond->if (exp)
+    (expand-clauses (cond-clauses exp)))
+
+  (defun expand-clauses (clauses)
+    (cl:if (null clauses)
+           false                         ; no else clause
+           (cl:let ((first (car clauses))
+                    (rest (cdr clauses)))
+             (cl:if (cond-else-clause? first)
+                    (cl:if (null rest)
+                           (sequence->exp (cond-actions first))
+                           (error "ELSE clause isn't last -- COND->IF ~S" clauses))
+                    (make-if (cond-predicate first)
+                             (sequence->exp (cond-actions first))
+                             (expand-clauses rest))))))
+  ;; end cond->if
+#+END_SRC
+*** Exercise 4.2
+a. Louis's ~eval~ will try to treat a definition expression--such as (define x 3)--as a procedure application. Instead of making a new binding for X, his ~eval~ will evaluate--depending on whether procedure arguments are evaluated from left-to-right or right-to-left--either (eval (operator '(define x 3) env)) or (list-of-values (operands '(define x 3)) env). In the first case, ~eval~ should find that 
+
+(operator '(define x 3)) => DEFINE
+
+and will then evaluate DEFINE, which is a variable. Next, (lookup-variable-value DEFINE env) should fail because DEFINE should be unbound. It is a special form, not bound to any procedure or value.
+
+In the second case, (list-of-values (operands (define x 3)) env) is evaluated:
+
+(operands (define x 3)) => (x 3).
+
+(list-of-values '(x 3)) might succeed if X is bound to something. Regardless, things will go wrong once we try to evaluate DEFINE and apply it to the result of (list-of-values '(x 3))
+
+b. The new syntax only requires that we change our procedure for identifying a procedure application and our selectors for getting the operator and operands:
+
+#+BEGIN_SRC lisp
+  (defun application? (exp) (tagged-list? exp 'call))
+
+  (defun operator (exp) (cadr exp))
+
+  (defun operands (exp) (cddr exp))
+#+END_SRC
+*** Exercise 4.3
+#+BEGIN_SRC lisp
+  (defun eval (exp env)
+    (cl:cond ((self-evaluating? exp) exp)
+             ((variable? exp) (lookup-variable-value exp env))
+             (t ((get 'eval (type exp))
+                 (body exp)
+                 env))))
+
+  (defun type (compound-expression) (car compound-expression))
+
+  (defun body (compound-expression) (cdr compound-expression))
+#+END_SRC
+
+Here is the data-directed version of ~deriv~ from Section 2.4.3 (pg. 185):
+
+#+BEGIN_SRC scheme
+  (define (deriv exp var)
+    (cond ((number? exp) 0)
+          ((variable? exp) (if (same-variable? exp var) 1 0))
+          (else ((get 'deriv (operator exp))
+                 (operands exp)
+                 var))))
+
+  (define (operator exp) (car exp))
+
+  (define (operands exp) (cdr exp))
+#+END_SRC
+
+The structure is the same! In both cases, we have a small number of simple--i.e. non-compound--expressions such as strings, numbers, or variables, that we check before we dispatch the the appropriate procedure to handle a compound expression. In both cases, handling variables and dispatch requires some contextual information: in the case of ~deriv~, we must consider ~var~, the variable with respect to which we are taking the derivative; in the case of ~eval~, we must consider ~env~, the environment the expression is being evaluated in.
+*** Exercise 4.4
+Here are implementations of ~and~ and ~or~ as derived expressions:
+
+#+BEGIN_SRC lisp
+  (defun and? (exp) (tagged-list? exp 'and))
+
+  (defun and-exps (exp) (cdr exp))
+
+  (defun and->if (exp)
+    (expand-and (and-exps exp)))
+
+  (defun expand-and (exps)
+    (cl:if (null exps)
+           'true
+           (cl:let ((first (car exps))
+                    (rest (cdr exps)))
+             (cl:if (null rest)
+                    first
+                    (make-if first
+                             (expand-and rest)
+                             false)))))
+#+END_SRC
+
+Test:
+
+#+BEGIN_SRC lisp
+  (and->if '(and exp1 exp2 exp3))
+  (and->if '(and))
+#+END_SRC
+
+#+BEGIN_SRC lisp
+  (defun or? (exp) (tagged-list? exp 'or))
+
+  (defun or-exps (exp) (cdr exp))
+
+  (defun or->if (exp)
+    (expand-or (or-exps exp)))
+
+  (defun make-let (bindings body)
+    (cl:list* 'let bindings body))
+
+  (defun expand-or (exps)
+    (cl:if (null exps)
+           false
+           (cl:let ((first (car exps))
+                    (rest (cdr exps)))
+             ;; we could be using be using more data abstraction here, e.g. a make-let-bindings constructor instead of cl:list.
+             (make-let (cl:list (make-let-binding val first)) 
+                       (cl:list (make-if 'val 'val (expand-or rest)))))))
+#+END_SRC
+
+This implementation of ~or~ requires using some facility for making local bindings.
+
+Test:
+
+#+BEGIN_SRC lisp
+  (or->if '(or exp1 exp2 exp3))
+  (or->if '(or))
+#+END_SRC
+
+The new ~eval~, predictably, is:
+
+#+BEGIN_SRC lisp
+  (defun eval (exp env)
+    (cl:cond ((self-evaluating? exp) exp)
+             ((variable? exp) (lookup-variable-value exp env))
+             ((quoted? exp) (text-of-quotation exp))
+             ((assignment? exp) (eval-assignment exp env))
+             ((definition? exp) (eval-definition exp env))
+             ((if? exp) (eval-if exp env))
+             ((lambda? exp)
+              (make-procedure (lambda-parameters exp)
+                              (lambda-body exp)
+                              env))
+             ((begin? exp)
+              (eval-sequence (begin-actions exp) env))
+             ((cond? exp) (eval (cond->if exp) env))
+             ((and? exp) (eval (and->if exp) env))
+             ((or? exp) (eval (or->if exp) env))
+             ((application? exp)
+              (apply (eval (operator exp) env)
+                     (list-of-values (operands exp) env)))
+             (t
+              (error "Unknown expression type -- EVAL ~S" exp))))
+#+END_SRC
+*** Exercise 4.5
+#+BEGIN_SRC lisp
+  (defun cond-arrow-clause? (clause)
+    (tagged-list? (cond-actions clause) '=>))
+
+  (defun expand-clauses (clauses)
+    (cl:if (null clauses)
+           false                         ; no else clause
+           (cl:let ((first (car clauses))
+                    (rest (cdr clauses)))
+             (cl:if (cond-else-clause? first)
+                    (cl:if (null rest)
+                           (sequence->exp (cond-actions first))
+                           (error "ELSE clause isn't last -- COND->IF ~S" clauses))
+                    (cl:if (cond-arrow-clause? first)
+                           (cl:let ((proc (cadr (cond-actions first))))
+                             (cl:if (null proc)
+                                    (error "Missing procedure in arrow clause -- COND->IF ~S" first)
+                                    (make-let (cl:list (make-let-binding val (cond-predicate first)))
+                                              (cl:list (make-if 'val
+                                                                (cl:list proc 'val)
+                                                                (expand-clauses rest))))))
+                           (make-if (cond-predicate first)
+                                    (sequence->exp (cond-actions first))
+                                    (expand-clauses rest)))))))
+#+END_SRC
+
+Here's an example to run to test:
+
+#+BEGIN_SRC lisp
+  (cond->if '(cond ((assoc 'b '((a 1) (b 2))) => cadr)
+              (else 'nothing)))
+#+END_SRC
+*** Exercise 4.6
+#+BEGIN_SRC lisp :noweb-ref let->combination
+  (defun let? (exp) (tagged-list? exp 'let))
+
+  (defun let-bindings (exp) (cadr exp))
+
+  (defun let-body (exp) (cddr exp))
+
+  (cl:defmacro make-let-binding (var exp)
+    `(cl:list ',var ,exp))
+
+  (defun let-binding-var (binding) (car binding))
+
+  (defun let-binding-exp (binding) (cadr binding))
+
+  (defun let->combination (exp)
+    (cl:let* ((bindings (let-bindings exp))
+              (vars (cl:mapcar #'let-binding-var bindings))
+              (exps (cl:mapcar #'let-binding-exp bindings)))
+      (cons (make-lambda vars (let-body exp))
+            exps)))
+#+END_SRC
+
+Testing the derivation:
+
+#+BEGIN_SRC lisp
+  (let->combination '(let ((x (+ 1 2 3))
+                           (y 1001))
+                      (* x y)
+                      (+ y x)))
+#+END_SRC
+
+Testing the selectors/constructors. This should return an expression identical to ~code~:
+
+#+BEGIN_SRC lisp
+  (defun test-let (let-exp)
+    (cl:equalp (make-let (let-bindings let-exp) (let-body let-exp))
+               let-exp))
+
+  (cl:let ((code '(let ((x (+ 1 2 3))
+                        (y (+ 1001 x)))
+                   (* x y)
+                   (+ y x))))
+    (cl:values (make-let (let-bindings code)
+                         (let-body code))
+               (test-let code)))
+#+END_SRC
+
+New ~eval~:
+
+#+BEGIN_SRC lisp
+  (defun eval (exp env)
+    (cl:cond ((self-evaluating? exp) exp)
+             ((variable? exp) (lookup-variable-value exp env))
+             ((quoted? exp) (text-of-quotation exp))
+             ((assignment? exp) (eval-assignment exp env))
+             ((definition? exp) (eval-definition exp env))
+             ((if? exp) (eval-if exp env))
+             ((lambda? exp)
+              (make-procedure (lambda-parameters exp)
+                              (lambda-body exp)
+                              env))
+             ((begin? exp)
+              (eval-sequence (begin-actions exp) env))
+             ((cond? exp) (eval (cond->if exp) env))
+             ((and? exp) (eval (and->if exp) env))
+             ((or? exp) (eval (or->if exp) env))
+             ((let? exp) (eval (let->combination exp) env))
+             ((application? exp)
+              (apply (eval (operator exp) env)
+                     (list-of-values (operands exp) env)))
+             (t
+              (error "Unknown expression type -- EVAL ~S" exp))))
+#+END_SRC
+*** Exercise 4.7
+For a ~let*~ expression, create a LET with a single binding: the first binding in the ~let*~. Inside the body of this let, create another ~let~ with a single binding: the second binding from the ~let*~... repeat until we've gone through all the ~let*~ bindings. The body of the final nested ~let~ expression is the body of the original ~let*~.
+#+BEGIN_SRC lisp
+  (defun let*->nested-lets (exp)
+    (cl:labels ((iter (bindings body)
+                  (cl:let ((first (car bindings))
+                           (rest (cdr bindings)))
+                    (cl:if (null rest)
+                           ;; Possibly add some more data abstraction here, e.g. instead of (cl:list first) use (make-let-bindings first): a make-let-bindings constructor that takes one or more LET bindings.
+                           (make-let (cl:list first)
+                                     body)
+                           (make-let (cl:list first)
+                                     (cl:list (iter rest body)))))))
+      (cl:let ((bindings (let-bindings exp))
+               (body (let-body exp)))
+        (iter bindings body))))
+#+END_SRC
+
+#+BEGIN_SRC lisp
+  (let*->nested-lets '(let* ((x (+ 1 2 3))
+                             (y (+ 1001 x)))
+                       (* x y)
+                       (+ y x)))
+#+END_SRC
+
+Adding a clause ~(eval (let*->nested-lets exp) env)~ should be sufficient.
+**** TODO Check this answer on schemewiki.
+*** Exercise 4.8
+Since the instructions are "Modify let->combination to also support named let," the exercise implies that we should reduce a named ~let~ to some other expression we can already handle.
+
+Here's the code we have to transform:
+
+#+BEGIN_SRC scheme
+  (define (fib n)
+    (let fib-iter ((a 1) (b 0) (count n))
+      (if (= count 0)
+          b
+          (fib-iter (+ a b) a (- count 1)))))
+#+END_SRC
+
+What I would like is to transform the named let into something like this:
+
+#+BEGIN_SRC scheme
+  (define (fib n)
+    (let ((fib-iter (lambda (a b count)
+                      (if (= count 0)
+                          b
+                          (fib-iter (+ a b) a (- count 1))))))
+      (fib-iter 1 0 n)))
+#+END_SRC
+
+The problem is, this will not work. ~let~ does not make the variables it binds visible in the body of code that it encloses, hence recursive calls of variables bound to lambdas do not work. We would need something like ~letrec~ in order for this to work.
+
+Another possible transformation:
+
+#+BEGIN_SRC scheme
+  (define (fib n)
+    (define (fib-iter a b count)
+      (if (= count 0)
+          b
+          (fib-iter (+ a b) a (- count 1))))
+    (fib-iter 1 0 n))
+#+END_SRC
+
+But it seems to me the meaning of this definition is different even though it would produce the same output; the second ~define~ mutates the environment set up by the ~fib~ procedure, while in the original named ~let~ code no such mutation occurs: instead, a new environment is created in which ~fib-iter~ is bound to a procedure and the expression ~(fib-iter (+ a b) a (- count 1))~ is evaluated inside the environment.
+
+Still, I've thought about it and see no other way to transform the code right now, so here's the implementation:
+
+#+BEGIN_SRC lisp
+  (defun named-let? (exp)
+    (cl:and (let? exp)
+            (variable? (cadr exp))))
+
+  (defun named-let-name (exp) (cadr exp))
+
+  (defun named-let-params (exp) (caddr exp))
+
+  (defun named-let-formal-params (exp) (cl:mapcar #'car (named-let-params exp)))
+
+  (defun named-let-actual-params (exp) (cl:mapcar #'cadr (named-let-params exp)))
+
+  (defun named-let-body (exp) (cdddr exp))
+
+  (defun make-define (name params body)
+    "The BODY should be a list of expressions to evaluate."
+    (cl:list* 'define (cons name params) body))
+
+  (defun named-let->combination (exp)
+    (cl:let ((name (named-let-name exp)))
+      (make-begin (cl:list (make-define name
+                                        (named-let-formal-params exp)
+                                        (named-let-body exp))
+                           (cons name (named-let-actual-params exp))))))
+
+  (defun let->combination (exp)
+    (cl:if (named-let? exp)
+           (named-let->combination exp)
+           (cl:let* ((bindings (let-bindings exp))
+                     (vars (cl:mapcar #'let-binding-var bindings))
+                     (exps (cl:mapcar #'let-binding-exp bindings)))
+             (cons (make-lambda vars (let-body exp))
+                   exps))))
+#+END_SRC
+
+Test:
+
+#+BEGIN_SRC lisp
+  (let->combination '(let fib-iter ((a 1) (b 0) (count n))
+                      (display count)
+                      (newline)
+                      (if (= count 0)
+                          b
+                          (fib-iter (+ a b) a (- count 1)))))
+#+END_SRC
+**** TODO Check answer
+Revisit this and figure out if there's a cleaner way to implement this.
+**** PLANNED Problematize
+See if you can come up with a situation where this environment mutation has negative effects. For example, maybe in the code above could clobber some other definition in the scope. We could write it like this to avoid that:
+
+#+BEGIN_SRC lisp
+  (defun named-let->combination (exp)
+    (cl:let ((name (cl:gensym (cl:symbol-name (named-let-name exp)))))
+      (make-begin (cl:list (make-define name
+                                        (named-let-formal-params exp)
+                                        (named-let-body exp))
+                           (cons name (named-let-actual-params exp))))))
+#+END_SRC
+
+In the code above we make use of ~gensym~ to ensure that the binding we add to the environment does not overwrite an existing binding or otherwise interfere with the bindings in the scope enclosing the named ~let~ expression.
+*** Exercise 4.9
+Let's implement a ~while~ construct. This
+
+#+BEGIN_SRC scheme
+  (define (print-values n)
+    (let ((x 0))
+      (while (< x n)
+        (display x)
+        (newline)
+        (set! x (+ x 1)))
+      (= x n)))
+
+  (while <condition>
+    <body>)
+#+END_SRC
+
+Transforms to
+
+#+BEGIN_SRC scheme
+  (define (print-values n)
+    (let ((x 0))
+      (define (while)
+        (if (< x n)
+            'done
+            (begin
+              (display x)
+              (newline)
+              (set! x (+ x 1))
+              (while))))
+      (= x n)))
+
+  (define (while)
+    (if <condition>
+        'done
+        (begin
+          <body>
+          (while))))
+#+END_SRC
+
+I have arbitrarily selected ~'done~ as the return value for ~while~. ~while~ should be used for its side-effects rather than its return value. Here is the implementation:
+
+#+BEGIN_SRC lisp
+  (defun while? (exp) (tagged-list? exp 'while))
+
+  (defun while-condition (exp) (cadr exp))
+
+  (defun while-body (exp) (cddr exp))
+
+  (defun while->procedure (exp)
+    (cl:let ((name (cl:gensym "WHILE")))
+      (make-define name
+                   nil
+                   (cl:list (make-if (while-condition exp)
+                                     'done
+                                     (make-begin (cl:append (while-body exp)
+                                                            (cl:list (cl:list name)))))))))
+#+END_SRC
+
+Test:
+
+#+BEGIN_SRC lisp
+  (while->procedure '(while (< x n)
+                      (display x)
+                      (newline)
+                      (set! x (+ x 1))))
+#+END_SRC
+
+Now let's make ~until~. It can be implemented as a derived expression using ~while~, so let's transform
+
+#+BEGIN_SRC scheme
+  (until <cond>
+    <body>)
+#+END_SRC
+
+into
+
+#+BEGIN_SRC scheme
+  (while (not <cond>)
+    <body>)
+#+END_SRC
+
+#+BEGIN_SRC lisp
+  (defun until? (exp) (tagged-list? exp 'until))
+
+  (defun until-condition (exp) (cadr exp))
+
+  (defun until-body (exp) (cddr exp))
+
+  (defun until->while (exp)
+    (cl:list* 'while
+              (cl:list 'not (until-condition exp))
+              (until-body exp)))
+#+END_SRC
+
+Test:
+
+#+BEGIN_SRC lisp
+  (until->while '(until <condition>
+                  <exp1>
+                  <exp2>))
+
+  (while->procedure (until->while '(until <condition>
+                                    <exp1>
+                                    <exp2>)))
+#+END_SRC
+
+We can add these control flow features to ~eval~ the same way we added any other derived expressions.
+*** Exercise 4.10
+Let's change the syntax of ~cond~ so we can write
+
+#+BEGIN_SRC scheme
+  (cond <pred1> <action1>
+        <pred2> <action2>
+        else <action3>)
+#+END_SRC
+
+instead of
+
+#+BEGIN_SRC scheme
+  (cond (<pred1> <action1>)
+        (<pred2> <action2>)
+        (else <action3>))
+#+END_SRC
+
+Here's the new definition. We group the <pred> <action> clauses into pairs for ease of manipulation. At this point though, the syntax of the clauses is the same as the original ~cond~, so we can simply reuse the old ~expand-clauses~ transformation:
+
+#+BEGIN_SRC lisp
+  (defun new-cond->if (exp)
+    (cl:labels ((convert (clauses res)
+               (cl:if (null clauses)
+                      res
+                      (convert (cddr clauses)
+                               (cl:append res
+                                          (cl:list (cl:list (car clauses)
+                                                            (cadr clauses))))))))
+      (expand-clauses (convert (cond-clauses exp) nil))))
+#+END_SRC
+
+A test showing we get the same ~if~ expression after transforming:
+
+#+BEGIN_SRC lisp
+  (defparameter code1
+    '(cond (<pred1> <action1>)
+      (<pred2> <action2>)
+      (else <action3>)))
+
+  (defparameter code2
+    '(cond
+      <pred1> <action1>
+      <pred2> <action2>
+      else <action3>))
+
+  (equalp (cond->if code1)
+          (new-cond->if code2))
+#+END_SRC
+
+Obviously, we could implement much more drastic syntax changes if we wanted. This change to the syntax of ~cond~ is pretty minimal. We could even use something other than SEXPrs for the code of some or all of our expression types. For example, we could define some expressions to be strings and define tests identifying the type of expression expressed as some string and modify the selectors to retrieve the appropriate parts.
+** Evaluator Data Structures
+*Testing of predicates*
+Here we define two self-evaluating symbols, ~true~ and ~false~, meant to be used as booleans in Common Lisp source code of the SCHEME package.
+
+We will make analogous definitions in the [[setup-environment]] section, defining self-evaluating symbols for our evaluator to use as booleans.
+
+These ~defparameter~ statements have no effect on the evaluator and are not strictly necessary; they are here for convenience. All that's needed for our evaluator to work properly is that ~true?~ and ~false?~ are defined in a way that's consistent with the definitions of the evaluator's internal conditional expressions--e.g. ~cond~, ~if~, etc. 
+
+If we omit the two ~defparameter~ statements, then we merely have to quote ~true~ and ~false~ whenever we use them in our Common Lisp source code.
+#+NAME: data-predicates
+#+BEGIN_SRC lisp
+  ;; begin data structures
+  (defparameter true 'true)
+  (defparameter false 'false)
+
+  (defun boolean? (exp)
+    (cl:if (eq exp true)
+           t
+           (eq exp false)))
+
+  (defun true? (x)
+    (cl:not (eq x false)))
+
+  (defun false? (x)
+    (eq x false))
+#+END_SRC
+
+*Representing procedures*
+#+NAME: data-procedures
+#+BEGIN_SRC lisp
+  (defun make-procedure (parameters body env)
+    (cl:list 'procedure parameters body env))
+
+  (defun compound-procedure? (p) (tagged-list? p 'procedure))
+
+  (defun procedure-parameters (p) (cadr p))
+
+  (defun procedure-body (p) (caddr p))
+
+  (defun procedure-environment (p) (cadddr p))
+#+END_SRC
+
+*Operations on Environments*
+#+NAME: data-environments
+#+BEGIN_SRC lisp
+  (defun enclosing-environment (env) (cdr env))
+
+  (defun first-frame (env) (car env))
+
+  (defparameter *the-empty-environment* nil)
+
+  (defun make-frame (variables values) (cons variables values))
+
+  (defun frame-variables (frame) (car frame))
+
+  (defun frame-values (frame) (cdr frame))
+
+  (defun add-binding-to-frame! (var val frame)
+    (setf (car frame) (cons var (car frame))
+          (cdr frame) (cons val (cdr frame))))
+
+  (defun extend-environment (vars vals base-env)
+    (cl:if (cl:= (cl:length vars) (cl:length vals))
+           (cons (make-frame vars vals) base-env)
+           (cl:if (cl:< (cl:length vars) (cl:length vals))
+                  (error "Too many arguments supplied ~S ~S" vars vals)
+                  (error "Too few arguments supplied ~S ~S" vars vals))))
+
+  (defun lookup-variable-value (var env)
+    (labels ((env-loop (env)
+               (labels ((scan (vars vals)
+                          (cl:cond ((null vars)
+                                    (env-loop (enclosing-environment env)))
+                                   ((eq var (car vars))
+                                    (car vals))
+                                   (t (scan (cdr vars) (cdr vals))))))
+                 (cl:if (eq env *the-empty-environment*)
+                        (error "Unbound variable ~S" var)
+                        (cl:let ((frame (first-frame env)))
+                          (scan (frame-variables frame)
+                                (frame-values frame)))))))
+      (env-loop env)))
+
+  (defun set-variable-value! (var val env)
+    (labels ((env-loop (env)
+               (labels ((scan (vars vals)
+                          (cl:cond ((null vars)
+                                    (env-loop (enclosing-environment env)))
+                                   ((eq var (car vars))
+                                    (setf (car vals) val))
+                                   (t (scan (cdr vars) (cdr vals))))))
+                 (cl:if (eq env *the-empty-environment*)
+                        (error "Unbound variable -- SET! ~S" var)
+                        (cl:let ((frame (first-frame env)))
+                          (scan (frame-variables frame)
+                                (frame-values frame)))))))
+      (env-loop env)))
+
+  (defun define-variable! (var val env)
+    (cl:let ((frame (first-frame env)))
+      (labels ((scan (vars vals)
+                 (cl:cond ((null vars)
+                           (add-binding-to-frame! var val frame))
+                          ((eq var (car vars))
+                           (setf (car vals) val))
+                          (t (scan (cdr vars) (cdr vals))))))
+        (scan (frame-variables frame)
+              (frame-values frame)))))
+  ;; end data structures
+#+END_SRC
+*** Exercise 4.11
+#+BEGIN_SRC lisp
+  (defparameter *the-empty-environment* nil)
+
+  (defun make-binding (var val) (cons var val))
+
+  (defun binding-var (b) (car b))
+
+  (defun binding-val (b) (cdr b))
+
+  (defun make-frame (bindings) bindings)
+
+  (defun frame-bindings (f) f)
+
+  (defun frame-variables (frame) (cl:mapcar #'binding-var frame))
+
+  (defun frame-values (frame) (cl:mapcar #'binding-val frame))
+
+  (defun add-binding-to-frame! (var val frame)
+    (cl:setf (car frame) (cons (make-binding var val) frame)))
+
+  (defun binding? (x) (cl:and (consp x)
+                              (variable? (car x))))
+
+  (defun binding-list? (x) (cl:and (cl:listp x)
+                                   (cl:every #'binding? x)))
+
+  (defun extend-environment (bindings base-env)
+    (cl:if (binding-list? bindings)
+           (cons (make-frame bindings) base-env)
+           (error "Invalid bindings structure ~S" bindings)))
+
+  (defun lookup-variable-value (var env)
+    (cl:labels ((env-loop (env)
+                  (cl:labels ((scan (bindings)
+                                (cl:cond ((null bindings)
+                                          (env-loop (enclosing-environment env)))
+                                         ((eq var (binding-var (car bindings)))
+                                          (binding-val (car bindings)))
+                                         (t (scan (cdr bindings))))))
+                    (cl:if (eq env *the-empty-environment*)
+                           (error "Unbound variable ~S" var)
+                           (cl:let ((frame (first-frame env)))
+                             (scan (frame-bindings frame)))))))
+      (env-loop env)))
+
+  (defun set-variable-value! (var val env)
+    (cl:labels ((env-loop (env)
+                  (cl:labels ((scan (bindings)
+                                (cl:cond ((null bindings)
+                                          (env-loop (enclosing-environment env)))
+                                         ((eq var (binding-var (car bindings)))
+                                          (cl:setf (cadr (car bindings)) val)) ; should be binding-val instead of cadr, but we would need to define a SETF for that place first.
+                                         (t (scan (cdr bindings))))))
+                    (cl:if (eq env *the-empty-environment*)
+                           (error "Unbound variable -- SET! ~S" var)
+                           (cl:let ((frame (first-frame env)))
+                             (scan (frame-bindings frame)))))))
+      (env-loop env)))
+
+  (defun define-variable! (var val env)
+    (cl:let ((frame (first-frame env)))
+      (cl:labels ((scan (bindings)
+                    (cl:cond ((null bindings)
+                              (add-binding-to-frame! var val frame))
+                             ((eq var (binding-var (car bindings)))
+                              (cl:setf (cadr (car bindings)) val))
+                             (t (scan (cdr bindings))))))
+        (scan (frame-bindings frame)))))
+
+#+END_SRC
+*** Exercise 4.12
+#+BEGIN_SRC lisp
+  ;; Abstractions
+  (defmacro with-first-frame ((name env) &body body)
+    `(cl:let ((,name (first-frame ,env)))
+       ,@body))
+
+  (defun make-scanner (var frame null-proc eq-proc &optional eq-proc-vars)
+    (lambda ()
+      (labels ((iter (vars vals)
+                 (cl:cond ((null vars)
+                           (funcall null-proc))
+                          ((eq var (car vars))
+                           (when eq-proc-vars
+                             (funcall eq-proc-vars vars))
+                           (funcall eq-proc vals))
+                          (t (iter (cdr vars) (cdr vals))))))
+        (iter (frame-variables frame)
+              (frame-values frame)))))
+
+  (defun make-env-loop (var env proc-source scanner)
+    (labels ((iter (env)
+               (lambda ()
+                 (cl:if (eq env *the-empty-environment*)
+                        (error "Unbound variable -- ~S ~S" proc-source var)
+                        (funcall scanner)))))
+      (iter env)))
+
+  ;; New definitions
+  (defun define-variable! (var val env)
+    (with-first-frame (frame env)
+      (funcall (make-scanner var
+                             frame
+                             (lambda () (add-binding-to-frame! var val frame))
+                             (lambda (vals) (setf (car vals) val))))))
+
+  ;; working
+  (defun lookup-variable-value (var env)
+    (with-first-frame (frame env)
+      (labels ((env-loop (env)
+                 (funcall
+                  (make-env-loop var
+                                 env
+                                 'lookup
+                                 (make-scanner var
+                                               frame
+                                               (lambda () (env-loop (enclosing-environment env)))
+                                               (lambda (vals) (car vals)))))))
+        (env-loop env))))
+
+  ;; broken
+  (defun set-variable-value! (var val env)
+    (with-first-frame (frame env)
+      (labels ((env-loop (env)
+                 (funcall
+                  (make-env-loop var
+                                 env
+                                 'set!
+                                 (make-scanner var
+                                               frame
+                                               (lambda () (env-loop (enclosing-environment env)))
+                                               (lambda (vals) (setf (car vals) val)))))))
+        (env-loop env))))
+
+  ;; broken
+  (defun transverse (env env-loop)
+    (labels ((iter (env)
+               (funcall env-loop env)))
+      (iter env)))
+
+  (defun lookup-variable-value (var env)
+    (with-first-frame (frame env)
+      (transverse env
+                  (make-env-loop var env 'lookup
+                                 (make-scanner var frame
+                                               (lambda () (transverse (enclosing-environment env) #'transverse))
+                                               (lambda (vals) (car vals))))
+                  )))
+#+END_SRC
+
+Tests:
+
+#+BEGIN_SRC lisp
+  (defparameter testenv (extend-environment '(square) '((lambda (n) (* n n))) *the-empty-environment*))
+
+  (lookup-variable-value 'square testenv)
+
+  (define-variable! 'x 1 testenv)
+
+  (lookup-variable-value 'x testenv)
+
+  (set-variable-value! 'x 3 testenv)
+
+  (lookup-variable-value 'x testenv)
+
+  (set-variable-value! 'y 100 testenv)
+
+  (define-variable! 'y 0 testenv)
+
+  (set-variable-value! 'y 20 testenv)
+
+  (lookup-variable-value 'y testenv)
+
+  (define-variable! 'z 33 testenv)
+
+  (lookup-variable-value 'z testenv)
+
+  (make-unbound! 'y testenv)
+#+END_SRC
+*** Exercise 4.13
+**** Specification 
+~make-unbound!~ works similarly to ~define-variable!~. That is, it will only mutate the current frame. Allowing it to remove bindings in other frames could lead to some nasty and hard to understand side-effects.
+**** TODO FIX
+Problem: ~setq~ does not work here like ~set!~ would in Scheme. Setting the value of ~vals~ and ~vars~ does not actually change  the cons cells they these variables refer to.
+#+BEGIN_SRC lisp
+  (defun make-unbound! (var env)
+    (with-first-frame (frame env)
+      (funcall (make-scanner var
+                             frame
+                             (lambda () (error "Variable ~S not found in environment ~S" var env))
+                             (lambda (vals) (setq vals (cdr vals)))
+                             (lambda (vars) (setq vars (cdr vars)))))))
+#+END_SRC
+** Running the Evaluator as a Program
+:PROPERTIES:
+:header-args: :noweb-ref run-program
+:END:
+#+NAME: setup-environment
+#+BEGIN_SRC lisp :noweb-ref setup-environment
+  ;; begin run-program
+  (defun setup-environment ()
+    (cl:let ((initial-env
+               (extend-environment (primitive-procedure-names)
+                                   (primitive-procedure-objects)
+                                   ,*the-empty-environment*)))
+      (define-variable! 'true true initial-env)
+      (define-variable! 'false false initial-env)
+      initial-env))
+
+  (defvar *the-global-environment* (setup-environment))
+
+  (defun reset-global-environment! () (setf *the-global-environment* (setup-environment)))
+#+END_SRC
+
+Here we define operations for handling primitive-procedures plus a list of procedures we want to import from Common Lisp to serve as primitives in our evaluator.
+
+#+BEGIN_SRC lisp :noweb-ref primitive-procedures
+  (defun primitive-procedure? (proc) (tagged-list? proc 'primitive))
+
+  (defun primitive-implementation (proc) (cadr proc))
+
+  (defun cl-pred->scm-pred (pred)
+    "Return a predicate procedure that is like PRED but returns TRUE instead of T and FALSE instead of NIL."
+    (lambda (&rest args)
+      (cl:if (cl:apply pred args)
+             true
+             false)))
+
+  (defparameter *primitive-predicate-names*
+    '((= cl:=)
+      (< cl:<)
+      (pair? cl:consp)
+      (null? cl:null)
+      (eq? cl:eq)
+      (number? cl:numberp)
+      )
+    "In each name-pair, the first symbol is what the name should be in the Scheme evaluator and the second symbol is the name for the Common Lisp predicate to use.")
+
+  (defparameter *primitive-predicates*
+    (mapcar (lambda (name-pair)
+              (cl:list (car name-pair)
+                       (cl-pred->scm-pred (cl:symbol-function (cadr name-pair)))))
+            ,*primitive-predicate-names*))
+
+  (defparameter *primitive-procedures*
+    `((car ,#'car)
+      (cdr ,#'cdr)
+      (cons ,#'cons)
+      (+ ,#'cl:+)
+      (- ,#'cl:-)
+      (* ,#'cl:*)
+      (/ ,#'cl:/)
+      ,@*primitive-predicates*
+      ))
+
+  (defun primitive-procedure-names ()
+    (mapcar #'car *primitive-procedures*))
+
+  (defun primitive-procedure-objects ()
+    (mapcar (lambda (proc) (cl:list 'primitive (cadr proc)))
+            ,*primitive-procedures*))
+
+  (defun apply-primitive-procedure (proc args)
+    (cl:apply (primitive-implementation proc) args))
+#+END_SRC
+
+#+BEGIN_SRC lisp :noweb-ref driver-loop
+  (defparameter *input-prompt* "> ")
+  (defparameter *output-prompt* "")
+
+  (defun prompt-for-input (string)
+    (cl:format t "~&~A" string))
+
+  (defun display-output-prompt (string)
+      (cl:format t "~&~A" string))
+
+  (defun announce-output (string)
+    (cl:format t "~&~A" string))
+
+  (defun newline ()
+    (cl:format t "~&"))
+
+  (defun driver-loop ()
+    (cl:loop
+      (prompt-for-input *input-prompt*)
+      (cl:let ((input (cl:read)))
+        (cl:if (equalp input '(quit))
+               (cl:return 'goodbye)
+               (user-print (eval input *the-global-environment*))))))
+
+  (defun user-print (object)
+    (cl:if (compound-procedure? object)
+           (cl:format t "~A" (cl:list 'compound-procedure
+                                       (procedure-parameters object)
+                                       (procedure-body object)
+                                       '<procedure-env>))
+           (cl:format t "~A" object)))
+  ;; end run-program
+#+END_SRC
+*** Exercise 4.14
+The standard ~map~ in Scheme takes a variable number of arguments, but we have not implemented variable arguments in our evaluator yet.
+** Data as Programs
+*** Exercise 4.15
+*Task*
+Show it is not possible to write a procedure ~halt?~ that correctly determines whether ~p~ halts on ~a~ for any procedure ~p~ and any object ~a~.
+
+*Strategy*
+Assume the converse, then derive a contradiction or absurdity.
+
+*Demonstration*
+Assume it *is* possible to write a procedure ~halt?~ that correctly determines whether ~p~ halts on ~a~ for any procedure ~p~ and any object ~a~.
+
+In that case, we can write the following program using our ~halt?~ procedure:
+
+#+BEGIN_SRC scheme
+  (define (omega) (omega))
+
+  (define (try p)
+    (if (halts? p p)
+        (omega)
+        'halted))
+#+END_SRC
+
+Now we can evaluate this:
+
+#+BEGIN_SRC scheme
+  (try try)
+#+END_SRC
+
+We enter the body of the ~try~ procedure and evaluate the predicate in the ~if~ expression. The predicate returns ~true~ if ~try~ halts on ~try~, and returns ~false~ otherwise. In other words, the predicate tests whether the very expression we are currently evaluating, ~(try try)~ should halt or not. If ~halts?~ determines that ~(try try)~ does indeed halt, we evaluate the consequent, which is a call to ~(omega)~ that runs forever without halting; hence, we have a contradiction because once ~halts?~ determines that ~try~ halts on ~try~, the program ~(try try)~ runs forever.
+
+On the other hand, if ~halts?~ determines that ~try~ does not halt on ~try~, we evaluate the alternative in the ~if~ expression. In this case, the program terminates and we return the symbol ~'halted~. Once again we have a contradiction because ~halts?~ decides that ~(try try)~ should not halt yet it does, terminating and returning a symbol.
+
+Hence, we have shown that there exists at least one procedure, namely ~try~, that cannot be correctly analyzed by ~halt?~. Therefore the assumption is false: it is not the case that it is possible to write a procedure ~halt?~ that correctly determines whether ~p~ halts on ~a~ for any procedure ~p~ and any object ~a~.
+** Internal Definitions
+*** Exercise 4.16
+a.
+#+BEGIN_SRC lisp
+  (defun lookup-variable-value (var env)
+    (labels ((env-loop (env)
+               (labels ((scan (vars vals)
+                          (cl:cond ((null vars)
+                                    (env-loop (enclosing-environment env)))
+                                   ((eq var (car vars))
+                                    (cl:let ((v (car vals)))
+                                      (cl:if (eq v '*unassigned*)
+                                             (error "var ~S is unassigned" var)
+                                             v)))
+                                   (t (scan (cdr vars) (cdr vals))))))
+                 (cl:if (eq env *the-empty-environment*)
+                        (error "Unbound variable ~S" var)
+                        (cl:let ((frame (first-frame env)))
+                          (scan (frame-variables frame)
+                                (frame-values frame)))))))
+      (env-loop env)))
+#+END_SRC
+b. 
+#+BEGIN_SRC lisp
+  (defparameter *test-procedure*
+    '(lambda (vars)
+      (define u exp1)
+      (define (v x) exp2)
+      exp3
+      exp4))
+
+  (defparameter *test-body* (lambda-body *test-procedure*))
+
+  (defun define->let-vars (defines)
+    (mapcar (lambda (d) (cl:list (definition-variable d) '*unassigned*))
+            defines))
+
+  (defun define->set-vars (defines)
+    (mapcar (lambda (d) (cl:list 'set! (definition-variable d) (definition-value d)))
+            defines))
+
+  (defun scan-out-defines (body)
+    (cl:let ((defs (cl:remove-if-not #'definition? body))
+             (rest (cl:remove-if #'definition? body)))
+      `(let ,(define->let-vars defs)
+         ,@(define->set-vars defs)
+         ,@rest)))
+#+END_SRC
+c.
+Installing ~scan-out-defines~ in ~procedure-body~ allows us to use a more readable representation of procedures. The procedures are stored as written--using internal definitions--and the transformation to simultaneous definitions occurs only when ~apply~ evaluates a procedure. This will be beneficial to the users if users will ever see some printed representation of non-primitive procedures--which they might during debugging, for example.
+
+On the other hand, installing ~scan-out-defines~ in ~make-procedure~ would be more efficient since we won't have to repeatedly transform the body of a procedure whenever that procedure is applied.
+
+#+BEGIN_SRC lisp
+  (defun procedure-body (p) (scan-out-defines (caddr p)))
+#+END_SRC
+
+#+BEGIN_SRC lisp
+  (defun make-procedure (parameters body env)
+    (cl:list 'procedure parameters (scan-out-defines body) env))
+#+END_SRC
+*** Exercise 4.17
+There's an extra frame because ~let~ always introduces a frame with bindings.
+
+We could implement the "simultaneous" scope rule by using expressions like this:
+
+#+BEGIN_SRC lisp
+  (defun define->define-unassigned (defines)
+    (cl:mapcar (lambda (d) (cl:list 'define (definition-variable d) '*unassigned*))
+               defines))
+
+  (defun scan-out-defines-2 (body)
+    (cl:let ((defs (cl:remove-if-not #'definition? body))
+             (rest (cl:remove-if #'definition? body)))
+      `(,@(define->define-unassigned defs)
+        ,@(define->set-vars defs)
+        ,@rest)))
+#+END_SRC
+
+Before, we used ~let~ to introduce a new frame in which the internally defined variables are bound to ~'*unassigned*~. Now, we instead sequentially define the variables as ~*unassigned*~ in the existing frame.
+*** Exercise 4.18
+After the transformation from the exercise we will evaluate
+
+#+BEGIN_SRC scheme
+  (define (solve f y0 dt)
+    (let ((y '*unassigned*)
+          (dy '*unassigned*))
+      (let ((a (integral (delay dy) y0 dt))
+            (b (stream-map f y)))
+        y)))
+#+END_SRC
+
+This evaluation fails when we try to bind ~b~ because ~y~ is evaluated as when we apply ~stream-map~ to it but at this time ~y~ is still bound to ~'*unassigned~.
+
+On the other hand, the transformation from the text will lead to evaluating
+
+#+BEGIN_SRC scheme
+  (define (solve f y0 dt)
+    (let ((y '*unassigned*)
+          (dy '*unassigned*))
+      (set! y (integral (delay dy) y0 dt))
+      (set! dy (stream-map f y))
+      y))
+#+END_SRC
+
+Unlike before, this works correctly because ~y~ is bound to the proper value when we evaluate ~(stream-map f y)~. Evaluating ~(set! y (integral ...))~ also poses no problem because the evaluation of ~dy~ in that expression is delayed, hence it does not matter that ~dy~ is bound to ~*unassigned*~ at that time.
+*** Exercise 4.19
+Eva's view is the most semantically correct and high-level, so I prefer it. Alyssa is right about the results if we use our implementation of "simultaneous" definition, but that merely goes to show either that our implementation is flawed or we were lying about the supposed "simultaneity" of internal definitions in our language.
+
+Maybe this "simultaneous definition" issue could be solved most cleanly in a language with non-strict evaluation.
+**** PLANNED Implement Eva's idea
+*** Exercise 4.20
+a.
+#+BEGIN_SRC lisp
+  (defun make-let-bindings (vars vals)
+    (mapcar #'cl:list vars vals))
+
+  (defun make-let (bindings body)
+    (cl:list* 'let bindings body))
+
+  (defun let-body (let-exp) (cddr let-exp))
+
+  (defun let-bindings (let-exp) (cadr let-exp))
+
+  (defun let-vars (let-exp)
+    (mapcar #'car (let-bindings let-exp)))
+
+  (defun let-vals (let-exp)
+    (mapcar #'cadr (let-bindings let-exp)))
+
+  ;; Define letrec to have the same syntax as let
+  (defun letrec-vars (letrec-exp) (let-vars letrec-exp))
+  (defun letrec-vals (letrec-exp) (let-vals letrec-exp))
+  (defun letrec-body (letrec-exp) (let-body letrec-exp))
+  (defun letrec-bindings (letrec-exp) (let-bindings letrec-exp))
+
+  (defun letrec->let (letrec-exp)
+    (make-let (mapcar (lambda (var) (cl:list var '*unassigned*))
+                      (letrec-vars letrec-exp))
+              (cl:append (mapcar (lambda (var val) (cl:list 'set! var val))
+                                 (letrec-vars letrec-exp)
+                                 (letrec-vals letrec-exp))
+                         (letrec-body letrec-exp))))
+
+  (defparameter *test-letrec*
+    '(letrec ((even?
+               (lambda (n)
+                 (if (= n 0)
+                     true
+                     (odd? (- n 1)))))
+              (odd?
+               (lambda (n)
+                 (if (= n 0)
+                     false
+                     (even? (- n 1))))))
+      exp1
+      exp2))
+#+END_SRC
+b.
+See notebook. Louis' suggestion that we can simply swap letrec for let is wrong. The lambda expressions must have a parent frame that contains bindings for ~even?~ and ~odd?~. If we use ~let~ instead of ~letrec~, the nearest parent frame when we lookup the value of ~odd?~ during evaluation of ~even?~ will be the global frame, which contains no binding for ~odd?~.
+*** Exercise 4.21
+a. 
+Here I check that the expression correctly computes the value of 5!, since I already know that value should be 120.
+#+BEGIN_SRC scheme
+  ((lambda (n)
+     ((lambda (fact)
+        (fact fact n))
+      (lambda (ft k)
+        (if (= k 1)
+            1
+            (* k (ft ft (- k 1)))))))
+   5)
+#+END_SRC
+
+Here's an analogous Fibonacci expression. The 6th Fibonacci number (0-indexed) should be 8:
+#+BEGIN_SRC scheme
+  ((lambda (n)
+     ((lambda (fib)
+        (fib fib n))
+      (lambda (f k)
+        (if (<= k 1)
+            k
+            (+ (f f (- k 1))
+               (f f (- k 2)))))))
+   6)
+#+END_SRC
+b.
+#+BEGIN_SRC scheme
+  (define (f x)
+    ((lambda (even? odd?)
+       (even? even? odd? x))
+     (lambda (ev? od? n)
+       (if (= n 0) #t (od? od? ev? (- n 1))))
+     (lambda (od? ev? n)
+       (if (= n 0) #f (ev? ev? od? (- n 1))))))
+#+END_SRC
+** Separating Syntactic Analysis from Execution
+#+BEGIN_SRC lisp :noweb-ref analyze
+  (defun eval-analyze (exp env)
+    (funcall (analyze exp) env))
+
+  (defun analyze (exp)
+    (cl:cond ((self-evaluating? exp)
+              (analyze-self-evaluating exp))
+             ((quoted? exp) (analyze-quoted exp))
+             ((variable? exp) (analyze-variable exp))
+             ((assignment? exp) (analyze-assignment exp))
+             ((definition? exp) (analyze-definition exp))
+             ((if? exp) (analyze-if exp))
+             ((lambda? exp) (analyze-lambda exp))
+             ((begin? exp) (analyze-sequence (begin-actions exp)))
+             ((cond? exp) (analyze (cond->if exp)))
+             ((application? exp) (analyze-application exp))
+             (t
+              (error "Unknown expression type -- ANALYZE ~S" exp))))
+
+  (defun analyze-self-evaluating (exp)
+    (lambda (env) exp))
+
+  (defun analyze-quoted (exp)
+    (cl:let ((qval (text-of-quotation exp)))
+      (lambda (env) qval)))
+
+  (defun analyze-variable (exp)
+    (lambda (env) (lookup-variable-value exp env)))
+
+  (defun analyze-assignment (exp)
+    (cl:let ((var (assignment-variable exp))
+             (vproc (analyze (assignment-value exp))))
+      (lambda (env)
+        (set-variable-value! var (funcall vproc env) env)
+        'ok)))
+
+  (defun analyze-definition (exp)
+    (cl:let ((var (definition-variable exp))
+             (vproc (analyze (definition-value exp))))
+      (lambda (env)
+        (define-variable! var (funcall vproc env) env)
+        'ok
+        ;; var
+        )))
+
+  (defun analyze-if (exp)
+    (cl:let ((pproc (analyze (if-predicate exp)))
+             (cproc (analyze (if-consequent exp)))
+             (aproc (analyze (if-alternative exp))))
+      (lambda (env)
+        (cl:if (true? (funcall pproc env))
+               (funcall cproc env)
+               (funcall aproc env)))))
+
+  (defun analyze-lambda (exp)
+    (cl:let ((vars (lambda-parameters exp))
+             (bproc (analyze-sequence (lambda-body exp))))
+      (lambda (env) (make-procedure vars bproc env))))
+
+  (defun analyze-sequence (exps)
+    (labels ((sequentially (proc1 proc2)
+               (lambda (env) (funcall proc1 env) (funcall proc2 env)))
+             (iter (first-proc rest-procs)
+               (cl:if (null rest-procs)
+                      first-proc
+                      (iter (sequentially first-proc (car rest-procs))
+                            (cdr rest-procs)))))
+      (cl:let ((procs (mapcar #'analyze exps)))
+        (cl:if (null procs)
+               (error "Empty sequence -- ANALYZE")
+               (iter (car procs) (cdr procs))))))
+
+  (defun analyze-application (exp)
+    (cl:let ((fproc (analyze (operator exp)))
+             (aprocs (mapcar #'analyze (operands exp))))
+      (lambda (env)
+        (execute-application (funcall fproc env)
+                             (mapcar (lambda (aproc) (funcall aproc env))
+                                     aprocs)))))
+
+  (defun execute-application (proc args)
+    (cl:cond ((primitive-procedure? proc)
+              (apply-primitive-procedure proc args))
+             ((compound-procedure? proc)
+              (funcall (procedure-body proc)
+                       (extend-environment (procedure-parameters proc)
+                                           args
+                                           (procedure-environment proc))))
+             (t (error "Unknown procedure type -- EXECUTE-APPLICATION ~S" proc))))
+#+END_SRC
+*** Exercise 4.22
+#+BEGIN_SRC lisp
+  (defun analyze (exp)
+    (cl:cond ((self-evaluating? exp)
+              (analyze-self-evaluating exp))
+             ((quoted? exp) (analyze-quoted exp))
+             ((variable? exp) (analyze-variable exp))
+             ((assignment? exp) (analyze-assignment exp))
+             ((definition? exp) (analyze-definition exp))
+             ((if? exp) (analyze-if exp))
+             ((lambda? exp) (analyze-lambda exp))
+             ((begin? exp) (analyze-sequence (begin-actions exp)))
+             ((cond? exp) (analyze (cond->if exp)))
+             ((let? exp) (analyze (let->combination exp))) ; HERE
+             ((application? exp) (analyze-application exp))
+             (t
+              (error "Unknown expression type -- ANALYZE ~S" exp))))
+#+END_SRC
+*** Exercise 4.23
+This question can be answered by picking some dummy value for ~exprs~--e.g. ~'(α)~ for a sequence of one expression and ~'(α β)~ for a sequence of two expressions. Then, we evaluate ~(analyze-sequence exprs)~ by hand using substitution. See paper notes.
+
+After doing this, we see that in both cases the SICP ~analyze-sequence~ returns a single compound procedure that evaluates all the elements of ~exprs~ in sequence. At runtime the only work left to do is to ~apply~ this procedure to an environment. All sequence-processing for ~exprs~ is done at analyze-time.
+
+Alyssa's version, on the other hand, returns a lambda of the form ~(lambda (env) (execute-sequence '((lambda (env) α) (lambda (env) β)) env))~. At runtime we apply this lambda to an environment and ~execute-sequence~ will have to do the work of extracting each analyzed element of ~exprs~ from the sequence. The analysis of the elements in ~exprs~ is done at analyze-time but at runtime some sequence processing remains to be done.
+*** Exercise 4.24
+#+BEGIN_SRC lisp
+  (cl:time (eval '(begin
+                   (define (fact-eval n)
+                    (if (= n 0)
+                        1
+                        (* n (fact-eval (- n 1)))))
+                   (fact-eval 50))
+                 (setup-environment)))
+
+  ;; Evaluation took:
+  ;;   0.000 seconds of real time
+  ;;   0.000267 seconds of total run time (0.000214 user, 0.000053 system)
+  ;;   100.00% CPU
+  ;;   731,780 processor cycles
+  ;;   32,768 bytes consed
+
+  ;; 30414093201713378043612608166064768844377641568960512000000000000
+
+  (cl:time (eval-analyze '(begin
+                           (define (fact-analyze n)
+                            (if (= n 0)
+                                1
+                                (* n (fact-analyze (- n 1)))))
+                           (fact-analyze 50))
+                         (setup-environment)))
+
+  ;; Evaluation took:
+  ;;   0.000 seconds of real time
+  ;;   0.000155 seconds of total run time (0.000124 user, 0.000031 system)
+  ;;   100.00% CPU
+  ;;   420,308 processor cycles
+  ;;   0 bytes consed
+  
+  ;; 30414093201713378043612608166064768844377641568960512000000000000
+#+END_SRC
+
+Analyzed version takes 58% the time of unanalyzed version.
+Analyzed version takes 57% the processor cycles of unanalyzed version.
+The analyzing version of ~eval~ is roughly 1.7 times as fast, i.e. nearly 2x.
+
+Obviously this experiment is pretty basic and lackluster, but it at least shows that ~analyze~ makes a substantial performance improvement.
+
+NOTE: the interpreter should use either analyzed or purely interpreted expressions but not both! Interleaving ~(eval-analyze exp some-env)~ and ~(eval exp some-env)~ leads to WaCkY results. In particular, ~analyze~ stores procedures in the environment differently than standard ~eval~ does. The body of an analyzed procedure stored in the environment is a Common Lisp #<closure>. The body of a purely eval'd/interpreted procedure stored in the environment is a cons/sexpr.
+
+* Variations on a Scheme--Lazy Evaluation
+snarf (pg 399)
+** Normal Order and Applicative Order
+*** Exercise 4.25
+#+BEGIN_SRC scheme
+  (define (unless cond usual exceptional)
+    (if cond exceptional usual))
+
+  (define (factorial n)
+    (unless (= n 1) (* n (factorial (- n 1))) 1))
+#+END_SRC
+
+It loops infinitely.
+** An Interpreter with Lazy Evaluation
+*Modifying the evaluator*
+
+#+BEGIN_SRC lisp
+  (defun eval (exp env)
+    (cl:cond ((self-evaluating? exp) exp)
+             ((variable? exp) (lookup-variable-value exp env))
+             ((quoted? exp) (text-of-quotation exp))
+             ((assignment? exp) (eval-assignment exp env))
+             ((definition? exp) (eval-definition exp env))
+             ((if? exp) (eval-if exp env))
+             ((lambda? exp)
+              (make-procedure (lambda-parameters exp)
+                              (lambda-body exp)
+                              env))
+             ((begin? exp)
+              (eval-sequence (begin-actions exp) env))
+             ((cond? exp) (eval (cond->if exp) env))
+             ((application? exp)
+              (apply (actual-value (operator exp) env)
+                     (operands exp)
+                     env))
+             (t
+              (error "Unknown expression type -- EVAL ~S" exp))))
+
+  (defun actual-value (exp env)
+    (force-it (eval exp env)))
+
+  (defun apply (procedure arguments env)
+    (cl:cond ((primitive-procedure? procedure)
+              (apply-primitive-procedure
+               procedure
+               (list-of-arg-values arguments env)))
+             ((compound-procedure? procedure)
+              (eval-sequence
+               (procedure-body procedure)
+               (extend-environment
+                (procedure-parameters procedure)
+                (list-of-delayed-args arguments env)
+                (procedure-environment procedure))))
+             (t
+              (error "Unknown procedure type -- APPLY ~S" procedure))))
+
+  (defun list-of-arg-values (exps env)
+    (cl:if (no-operands? exps)
+           nil
+           (cons (actual-value (first-operand exps) env)
+                 (list-of-arg-values (rest-operands exps)
+                                     env))))
+
+  (defun list-of-delayed-args (exps env)
+    (cl:if (no-operands? exps)
+           nil
+           (cons (delay-it (first-operand exps) env)
+                 (list-of-delayed-args (rest-operands exps)
+                                       env))))
+
+  (defun eval-if (exp env)
+    (cl:if (true? (actual-value (if-predicate exp) env))
+           (eval (if-consequent exp) env)
+           (eval (if-alternative exp) env)))
+
+  (defun driver-loop ()
+    (cl:loop
+      (cl:format t "~&~A " (cl:concatenate 'cl:string "L" *input-prompt*))
+      (cl:let ((input  (cl:read)))
+        (cl:if (equalp input '(quit))
+               'goodbye
+               (user-print (actual-value input *the-global-environment*))))))
+#+END_SRC
+
+*Representing thunks*
+
+#+BEGIN_SRC lisp
+  (defun force-it (obj)
+    (cl:if (thunk? obj)
+           (actual-value (thunk-exp obj) (thunk-env obj))
+           obj))
+
+  (defun delay-it (exp env)
+    (cl:list 'thunk exp env))
+
+  (defun thunk? (obj)
+    (tagged-list? obj 'thunk))
+
+  (defun thunk-exp (thunk) (cadr thunk))
+
+  (defun thunk-env (thunk) (caddr thunk))
+
+  (defun evaluated-thunk? (obj)
+    (tagged-list? obj 'evaluated-thunk))
+
+  (defun thunk-value (evaluated-thunk) (cadr evaluated-thunk))
+
+  (defun force-it (obj)
+    (cl:cond ((thunk? obj)
+              (cl:let ((result (actual-value
+                                (thunk-exp obj)
+                                (thunk-env obj))))
+                (setf (car obj) 'evaluated-thunk)
+                (setf (cadr obj) result)
+                (setf (cddr obj) 'deleted)
+                result))
+             ((evaluated-thunk? obj)
+              (thunk-value obj))
+             (t obj)))
+#+END_SRC
+
+*** Exercise 4.27
+count => 1
+w => 10
+count => 2
+
+My guess was right.
+
+When we define ~w~, we evaluate the application ~(id (id 10))~. The outer ~id~ is applied after following the evaluation process for compound procedures, thus the body of ~id~ is evaluated once, incrementing ~count~ to 1. However, the inner ~id~ need not be evaluated immediately because our interpreter is lazy, thus arguments to procedures--in this case ~(id 10)~ is supplied as an argument to ~id~--are not evaluated until needed. Instead, ~(id 10)~ is converted to a thunk to be evaluated later.
+
+Once we evaluate ~w~ we not only get its value--10--but also evaluate the thunk version of ~(id 10)~ since this is necessary to retreive the value. Thus, the body of ~id~ is evaluated a second time and the value of ~count~ becomes 2.
+*** Exercise 4.28
+When using higher order functions, e.g. passing a procedure as an argument, these operators will be wrapped into the ~thunk-expression~ attribute of a thunk. Evaluating a thunk returns the thunk. Thus, to get the operator/procedure and apply it we will need to use ~actual-value~ instead of ~eval~ in this case.
+*** Exercise 4.29
+Any time where an expression is likely to be evaluated repeatedly is a good example of a situation where memoization greatly improves performance. E.g. computing fibonacci numbers.
+
+*memoized*
+(square (id 10)) => 100
+count => 1
+*non-memoized*
+(square (id 10)) => 100
+count => 2
+*** Exercise 4.30
+a. +Ben is right because the definition of ~for-each~ will ~force-it~ the evaluation of both ~proc~ and ~items~. ~proc~ is forced in the expression ~(proc (car items))~, wherein the ~(actual-value proc)~ will be passed to ~apply~. ~items~ is forced when we call primitive procedures like ~car~ or ~cdr~ on it.+
+
+The above comments are a misunderstanding. The real question is why the body of Ben's ~(lambda (x) (newline) (display x))~ is evaluated properly. I.e. why is ~(newline)~ evaluated. The answer is... probably because it's a primitive? So when we ~eval~ ~ ~(newline)~ it's passed to apply and identified as a primitive-procedure and therefore forced.
+
+b. 
+*text*
+(p1 1) => '(1 2)
+In ~(p1 1)~ the value 1 becomes a thunk. When we apply ~p1~ we evaluate the primitive assignment expression in the body and then force the thunk when we evaluate ~x~ at the end.
+
+(p2 1) => 1
+In ~(p2 1) the value 1 becomes a thunk. We enter the body and call ~(p (set! x ...))~, wherein the expression ~(set! x ...)~ is delayed. When we apply ~p~, we evaluate ~e~--which is a thunk--in the body, and when we pass a thunk to ~eval~ we get a thunk back without forcing it. Next we evaluate ~x~ in the body, forcing the thunk because it's the last expression. Hence, ~x~ is forced while the ~set!~ expression is never forced since it gets passed as an argument to a procedure application and is thus delayed and never forced.
+
+*Cy*
+(p1 1) => '(1 2)
+(p2 1) => '(1 2)
+The only difference here is that whereas before the expression ~e~ in the body of the internal procedure ~p~ is never forced according to the rules of the interpreter in the text, Cy's version forces all the expressions in the body of a procedure, so in his version ~e~ is forced when ~p~ is applied. Thus the ~set!~ expression is forced before ~x~ is forced.
+
+c. In the example of part a, all the body expressions of the lambda are forced because they are primitives.
+
+d. What design choice is most appropriate depends on our understanding of the meaning of "needed" in the motto "a lazy language only forces the evaluation of an expression that is needed." The implied meaning of "needed" in the text is "needed to return a result / evaluate some expression." In this case the design choice in the text makes the most sense and is the most consistent. I favor this choice; we should be discouraging programmers from mixing lazy evaluation and side effects rather than trying to make the results of edge-cases in this combination more intuitive.
+
+However, there is an argument to be made for Cy's approach if we expand the definition of "needed." If the programmer is including expressions in the body of a procedure before the final expression, then they probably want those expressions to be evaluated for their side effect; the "result"--i.e. the sideffect--of those expressions is therefore "needed" in some sense.
+*** TODO Exercise 4.31
+I'm going to abbreviate this and skip the non-memoized laziness option. I'll implement only a ~lazy~ declaration for arguments in a definition and all lazily evaluated arguments shall be memoized.
+
+Starting with the lazy versions of apply/eval as a base, all we need to do is modify ~apply~ to recognize and separate the strict and the nonstrict arguments and appropriately employ both the lazy and the eager methods of environment-extension/compound-procedure-application.
+
+For berevity, this modification to apply breaks some abstraction barriers since ~filter-respectively~ operates on Common Lisp list types and we use it "parameters" and "arguments" within ~apply~, implying that we take for granted that those data types will be CL lists. 
+
+#+BEGIN_SRC lisp
+  (defun strict-parameter? (p)
+    (symbolp p))
+
+  (defun nonstrict-parameter? (p)
+    (cl:and (consp p) (eq (cadr p) 'lazy)))
+
+  (defun parameter-name (p)
+    (cl:cond ((strict-parameter? p) p)
+             ((nonstrict-parameter? p) (car p))))
+
+  (defun filter-respectively (pred list1 list2)
+    "For every nth element of LIST1 satisfying the predicate PRED, return one list containing each nth element of LIST1 and another list containing the corresponding nth element of LIST2. *Returns two values.*
+
+  Example:
+  (filter-respectively #'nonstrict-parameter? '(a (b lazy) (c lazy) d) '(3 (/ 1 0) (set! x (+ x 1)) 'foobar))
+  => '((b lazy) (c lazy))
+     '((/ 1 0) (set! x (+ x 1)))"
+    (labels ((iter (x y x-result y-result)
+               (cl:if (null x)
+                      (cl:values x-result y-result)
+                      (cl:if (funcall pred (car x))
+                             (iter (cdr x)
+                                   (cdr y)
+                                   (cl:append x-result (cl:list (car x)))
+                                   (cl:append y-result (cl:list (car y))))
+                             (iter (cdr x)
+                                   (cdr y)
+                                   x-result
+                                   y-result)))))
+      (iter list1 list2 nil nil)))
+
+  (defun apply (procedure arguments env)
+    (cl:cond ((primitive-procedure? procedure)
+              (apply-primitive-procedure
+               procedure
+               (list-of-arg-values arguments env)))
+             ((compound-procedure? procedure)
+              (cl:let ((params (procedure-parameters procedure)))
+                (cl:multiple-value-bind (strict-params strict-args)
+                    (filter-respectively #'strict-parameter? params arguments)
+                  (cl:multiple-value-bind (nonstrict-params nonstrict-args)
+                      (filter-respectively #'nonstrict-parameter? params arguments)
+                    (eval-sequence
+                     (procedure-body procedure)
+                     (extend-environment
+                      strict-params
+                      (list-of-values strict-args env)
+                      (extend-environment
+                       (mapcar #'parameter-name nonstrict-params)
+                       (list-of-delayed-args nonstrict-args env)
+                       (procedure-environment procedure))))))))
+             (t
+              (error "Unknown procedure type -- APPLY ~S" procedure))))
+#+END_SRC
+
+Original ~eval~ and ~apply~ for reference:
+
+#+BEGIN_SRC lisp
+  (defun eval (exp env)
+    (cl:cond ((self-evaluating? exp) exp)
+             ((variable? exp) (lookup-variable-value exp env))
+             ((quoted? exp) (text-of-quotation exp))
+             ((assignment? exp) (eval-assignment exp env))
+             ((definition? exp) (eval-definition exp env))
+             ((if? exp) (eval-if exp env))
+             ((lambda? exp)
+              (make-procedure (lambda-parameters exp)
+                              (lambda-body exp)
+                              env))
+             ((begin? exp)
+              (eval-sequence (begin-actions exp) env))
+             ((cond? exp) (eval (cond->if exp) env))
+             ((application? exp)
+              (apply (eval (operator exp) env)
+                     (list-of-values (operands exp) env)))
+             (t
+              (error "Unknown expression type -- EVAL ~S" exp))))
+
+  (defun apply (procedure arguments)
+    (cl:cond ((primitive-procedure? procedure)
+              (apply-primitive-procedure procedure arguments))
+             ((compound-procedure? procedure)
+              (eval-sequence
+               (procedure-body procedure)
+               (extend-environment
+                (procedure-parameters procedure)
+                arguments
+                (procedure-environment procedure))))
+             (t
+              (error "Unknown procedure type -- APPLY ~S" procedure))))
+#+END_SRC
+** Streams as Lazy Lists
+#+BEGIN_SRC lisp
+  (eval '(begin
+          (define (cons x y)
+           (lambda (m) (m x y)))
+          (define (car z)
+           (z (lambda (p q) p)))
+          (define (cdr z)
+           (z (lambda (p q) q)))
+          (define (list-ref items n)
+           (if (= n 0)
+               (car items)
+               (list-ref (cdr items) (- n 1))))
+          (define (add-lists list1 list2)
+           (cond ((null? list1) list2)
+                 ((null? list2) list1)
+                 (else (cons (+ (car list1) (car list2))
+                             (add-lists (cdr list1) (cdr list2)))))))
+        ,*the-global-environment*)
+
+  (eval '(begin
+          (define ones (cons 1 ones))
+          (define integers (cons 1 (add-lists ones integers))))
+        ,*the-global-environment*)
+#+END_SRC
+*** Exercise 4.32
+Example: 
+(cons x y) => (thunk . thunk) 
+vs.
+(cons x y) => (x . thunk)
+
+This could be useful when we want the cars in our conses to be lazy streams themselves, e.g. for using lazy streams as trees rather than lists.
+*** PLANNED Exercise 4.33
+skip
+I'm skipping this exercise and the next for now until I decide on an evaluation strategy and implementation for my interpreter. I'm not sure I like the text's functional implementation in this section. I'm not sure I want the language I'm working on to be lazy either. Working out the niceties and nuances--such as printing and ergonomic quoting--in a lazy language does not seem to me like a great use of time. Implementing and experimenting with the laziness was instructive but these questions are implementation details--busy work.
+*** PLANNED Exercise 4.34
+skip... kind of
+To do this, you do two things
+1. Redefine ~user-print~--shown below--to handle conses in a special way.
+2. Rather than returning a naked procedure, ~cons~ should return abstract data of type cons and the interpreter should be able to identify it as such; we can used the tagged-list approach we've been using throughout this interpreter. This way the printer will know when it's dealing with a cons and handle it specially.
+3. Decide on a representation. Should all our conses be printed the same way, with no information about what's inside? Then printing one is easy. We print something like "(LAZY-CONS ...)." The user may ~define~ a printing procedure for iterating through the stream, forcing and printing some or all of its elements.
+#+BEGIN_SRC lisp
+  (defun user-print (object)
+    (cl:cond ((compound-procedure? object)
+              (cl:format t "~A" (cl:list 'compound-procedure
+                                         (procedure-parameters object)
+                                         (procedure-body object)
+                                         '<procedure-env>)))
+             ((cons? object)
+              (cl:format t "~A" (cl:list 'cons <process all previously evaluated thunks and display them...>)))
+             (t (cl:format t "~A" object))))
+#+END_SRC
+* Variations on a Scheme--Nondeterministic Computing
+#+BEGIN_SRC scheme
+  (define (not p) (if p false true))
+
+  (define (require p)
+    (if (not p) (amb)))
+
+  (define (an-element-of items)
+    (require (not (null? items)))
+    (amb (car items) (an-element-of (cdr items))))
+
+  (define (an-integer-starting-from n)
+    (amb n (an-integer-starting-from (+ n 1))))
+#+END_SRC
+** Amb and Search
+automagically (pg 416)
+history of automatic search in programming languages (pg 416 note 47)
+- where does kanren fit in?
+*** Exercise 4.35
+#+BEGIN_SRC scheme
+  (define (an-integer-between low high)
+    (require (< low high))
+    (amb low (an-integer-between (+ low 1) high)))
+#+END_SRC
+*** DONE Exercise 4.36
+If we use ~an-integer-starting-from~ we won't be able to guarantee that i, j, and k have the right relationship. Here's how it might look:
+#+BEGIN_SRC scheme
+  (define (a-pythagorean-triple-starting-from low)
+    (let ((i (an-integer-starting-from low)))
+      (let ((j (an-integer-starting-from i)))
+        (let ((k (an-integer-starting-from j)))
+          (require (= (+ (* i i) (* j j)) (* k k)))
+          (list i j k)))))
+#+END_SRC
+
+Since there is no upper bound, the numbers could end up being anything and we are unlikely to get a triple.
+
+We can rewrite the procedure to incorporate an upper bound this way:
+
+#+BEGIN_SRC scheme
+  (define (a-pythagorean-triple-starting-from n)
+    (let ((k (an-integer-starting-from n)))
+      (let ((j (an-integer-between n k)))
+        (let ((i (an-integer-between n j)))
+          (require (= (+ (* i i) (* j j)) (* k k)))
+          (list i j k)))))
+#+END_SRC
+*** CANCEL Exercise 4.37
+skip
+** Examples of Nondeterministic Programs
+*** Exercise 4.38
+skip
+What's the point of doing this by hand? I could revisit it after implementing the Amb evaluator but again what's the point. I won't learn anything from running the expression in the evaluator and getting an answer.
+*** PLANNED Exercise 4.39
+If there are multiple answers, it's possible the order of the restrictions may affect the order of the answers. If there's a single answer, the order of the restrictions doesn't matter.
+
+One thing we can do to get a little speed is to move the most computationally expensive ~require~s--e.g. ~distinct?~--to the end. ~distinct?~ is the slowest requirement check of them all, having an upper bound of quadratic time. If we begin each series of requirements then every attempt at finding our five values will have a quadratic upper bound. If we move distinct to the end and check all our faster requirements too--e.g. the ~(not (= ...))~ requirements which have constant time--then some of our trials will have a lower upper bound since they will fail before getting to the expensive ~distinct?~ check.
+
+Maybe I'll revisit the speed question after implementing the evaluator so I can test my hypothesis.
+
+Also see: http://community.schemewiki.org/?sicp-ex-4.39, which has some interesting answers.
+*** Exercise 4.40
+#+BEGIN_SRC scheme
+  (define (multiple-dwelling)
+    (let ((cooper (amb 2 3 4)) ; miller must live above cooper
+          (fletcher (amb 2 3 4))) ; fletcher is not on 1 or 5
+      (require (not (= (abs (- fletcher cooper)) 1)))
+      (let ((miller (amb 3 4 5))) ; miller cannot be on 1 or 2 since he is higher than cooper
+        (require (> miller cooper))
+        (let ((smith (amb 1 2 3 4 5)))
+          (require (not (= (abs (- smith fletcher)) 1)))
+          (let ((baker (amb 1 2 3 4))) ; baker not on 5
+            (require (distinct? (list baker cooper fletcher miller smith)))
+            (list (list 'baker baker)
+                  (list 'cooper cooper)
+                  (list 'fletcher fletcher)
+                  (list 'miller miller)
+                  (list 'smith smith)))))))
+#+END_SRC
+
+Arguably it's missing the point to manually exclude numbers from our ~amb~ expressions and we should instead be using require to do this. I think this point is valid but I don't feel like rewriting this to include the four extra requires.
+*** TODO Exercise 4.41
+#+BEGIN_SRC scheme
+  (define (permutations s)
+    "From section 2.2.3, pg 124. REMOVE is defined on the same page. Flatmap defined on pg. 123."
+    (if (null? s)
+        (list '())
+        (flatmap (lambda (x)
+                   (map (lambda (p) (cons x p))
+                        (permutations (remove x s))))
+                 s)))
+
+  (define (adjacent? x y)
+    (= (abs (- x y)) 1))
+
+  (define (multiple-dwelling)
+    (define (meets-requirements? positions)
+      (apply
+       (lambda (b c f m s)
+         (not (= b 5))
+         (not (= c 1))
+         (not (= f 5))
+         (not (= f 1))
+         (> m c)
+         (not (adjacent? s f))
+         (not (adjacent? f c)))
+       positions))
+    (let ((possibilities (permutations (list 1 2 3 4 5))))
+      (filter meets-requirements? possibilities)))
+#+END_SRC
+*** PLANNED Exercise 4.42
+revisit when amb is implemented
+*** PLANNED Exercise 4.43
+revisit
+*** PLANNED Exercise 4.44
+revisit after implementing amb and after completing exercise 2.42
+*** Parsing natural language
+
+*** Exercise 4.45
+One parse would be
+
+#+BEGIN_SRC scheme
+  (sentence
+   (simple-noun-phrase (article the) (noun professor))
+   (verb-phrase
+    (verb-phrase
+     (verb lectures)
+     (prep-phrase
+      (prep to)
+      (simple-noun-phrase (article the) (noun student))))
+    (prep-phrase
+     (prep in)
+     (noun-phrase
+      (simple-noun-phrase (article the) (noun class))
+      (prep-phrase
+       (prep with)
+       (simple-noun-phrase (article the) (noun cat)))))))
+#+END_SRC
+
+The professor is lecturing to the student. Where? In the class. Which class? The class with the cat.
+
+These parses are very tedious to communicate/write manually, so I'll skip the other four.
+*** Exercise 4.46
+English is read from left to right. We pass sentences such that the first word in the sentence is the first element in the list, thus "the cat ran" becomes ~'(the cat ran)~. If we want our evaluator to evaluate operands from right to left instead, we would have to pass sentences backwords like so: ~'(ran cat the)~.
+*** DONE Exercise 4.47
+It looks wrong, i.e. substantially different from the text definition. Maybe missing a layer of recursion.
+
+Might revisit this once I implement amb.
+
+Cheated and looked here: http://community.schemewiki.org/?sicp-ex-4.47
+
+Louis' does not work correctly because it can recurse infinitely anytime ~amb~ choses the ~(list 'verb-phrase ...)~ option. This is because that expression makes a recursive call to ~(parse-verb-phrase)~. Which has a definition that includes the expression that makes calls to ~(parse-verb-phrase)~... etc. There are branches of search which never terminate. The recursive call to ~maybe-extend~ in the text's definition of ~parse-verb-phrase~ is different because it will always terminate when the parser fails to find a prepositional phrase.
+*** PLANNED Exercise 4.48
+After implementing ~amb~ and the basic parsing procedures, if the topic becomes interesting to me I'll revisit it. These parsers are toys though and I'm not sure I wish to play from them or if I'll take away any worthwhile insight from the task. I'll revisit this if I change my mind.
+*** PLANNED Exercise 4.49
+This sounds fun. Revisit when we have ~amb~.
+** Implementing the ~Amb~ Evaluator
+*** Structure of the evaluator
+#+BEGIN_SRC lisp :noweb-ref amb-eval
+  (defun amb? (exp) (tagged-list? exp 'amb))
+
+  (defun amb-choices (exp) (cdr exp))
+
+  (defun analyze (exp)
+    (cl:cond ((self-evaluating? exp)
+              (analyze-self-evaluating exp))
+             ((quoted? exp) (analyze-quoted exp))
+             ((variable? exp) (analyze-variable exp))
+             ((assignment? exp) (analyze-assignment exp))
+             ((definition? exp) (analyze-definition exp))
+             ((if? exp) (analyze-if exp))
+             ((lambda? exp) (analyze-lambda exp))
+             ((begin? exp) (analyze-sequence (begin-actions exp)))
+             ((cond? exp) (analyze (cond->if exp)))
+             ((let? exp) (analyze (let->combination exp)))
+             ((amb? exp) (analyze-amb exp))
+             ((ramb? exp) (analyze-ramb exp))
+             ((application? exp) (analyze-application exp))
+             (t
+              (error "Unknown expression type -- ANALYZE ~S" exp))))
+
+  (defun ambeval (exp env succeed fail)
+    (funcall (analyze exp) env succeed fail))
+#+END_SRC
+*** Simple expressions
+#+BEGIN_SRC lisp :noweb-ref amb-exp
+  (defun analyze-self-evaluating (exp)
+    (lambda (env succeed fail)
+      (funcall succeed exp fail)))
+
+  (defun analyze-quoted (exp)
+    (cl:let ((qval (text-of-quotation exp)))
+      (lambda (env succeed fail)
+        (funcall succeed qval fail))))
+
+  (defun analyze-variable (exp)
+    (lambda (env succeed fail)
+      (funcall succeed (lookup-variable-value exp env) fail)))
+
+  (defun analyze-lambda (exp)
+    (cl:let ((vars (lambda-parameters exp))
+             (bproc (analyze-sequence (lambda-body exp))))
+      (lambda (env succeed fail)
+        (funcall succeed (make-procedure vars bproc env) fail))))
+#+END_SRC
+*** Conditionals and sequences
+#+BEGIN_SRC lisp :noweb-ref amb-cond
+  (defun analyze-if (exp)
+    (cl:let ((pproc (analyze (if-predicate exp)))
+             (cproc (analyze (if-consequent exp)))
+             (aproc (analyze (if-alternative exp))))
+      (lambda (env succeed fail)
+        (funcall pproc
+                 env
+                 ;; success continuation for evaluating
+                 ;; the predicate to obtain pred-value
+                 (lambda (pred-value fail2)
+                  (cl:if (true? pred-value)
+                         (funcall cproc env succeed fail2)
+                         (funcall aproc env succeed fail2)))
+                 fail))))
+
+  (defun analyze-sequence (exps)
+    (labels ((sequentially (a b)
+               (lambda (env succeed fail)
+                 (funcall a
+                          env
+                          ;; success continuation for calling a
+                          (lambda (a-value fail2)
+                            (funcall b env succeed fail2))
+                          ;; failure continuation for calling a
+                          fail)))
+             (iter (first-proc rest-procs)
+               (cl:if (null rest-procs)
+                      first-proc
+                      (iter (sequentially first-proc (car rest-procs))
+                            (cdr rest-procs)))))
+      (cl:let ((procs (mapcar #'analyze exps)))
+        (cl:if (null procs)
+               (error "Empty sequence -- ANALYZE")
+               (iter (car procs) (cdr procs))))))
+#+END_SRC
+*** Definitions and assignments
+#+BEGIN_SRC lisp :noweb-ref amb-assign
+  (defun analyze-definition (exp)
+    (cl:let ((var (definition-variable exp))
+             (vproc (analyze (definition-value exp))))
+      (lambda (env succeed fail)
+        (funcall vproc
+                 env
+                 (lambda (val fail2)
+                   (define-variable! var val env)
+                   (funcall succeed 'ok fail2))
+                 fail))))
+
+  (defun analyze-assignment (exp)
+    (cl:let ((var (assignment-variable exp))
+             (vproc (analyze (assignment-value exp))))
+      (lambda (env succeed fail)
+        (funcall vproc
+                 env
+                 (lambda (val fail2)           ; *1*
+                   (cl:let ((old-value
+                              (lookup-variable-value var env)))
+                     (set-variable-value! var val env)
+                     (funcall succeed
+                              'ok
+                              (lambda ()       ; *2*
+                                (set-variable-value! var old-value env)
+                                (funcall fail2)))))
+                 fail))))
+#+END_SRC
+*** Procedure applications
+#+BEGIN_SRC lisp :noweb-ref amb-proc
+  (defun analyze-application (exp)
+    (cl:let ((fproc (analyze (operator exp)))
+             (aprocs (mapcar #'analyze (operands exp))))
+      (lambda (env succeed fail)
+        (funcall fproc
+                 env
+                 (lambda (proc fail2)
+                   (get-args aprocs
+                             env
+                             (lambda (args fail3)
+                               (execute-application
+                                proc args succeed fail3))
+                             fail2))
+                 fail))))
+
+  (defun get-args (aprocs env succeed fail)
+    (cl:if (null aprocs)
+           (funcall succeed nil fail)
+           (funcall (car aprocs)
+                    env
+                    (lambda (arg fail2)
+                      (get-args (cdr aprocs)
+                                env
+                                ;; success continuation for
+                                ;; recursive call to get-args
+                                (lambda (args fail3)
+                                  (funcall succeed
+                                           (cons arg args)
+                                           fail3))
+                                fail2))
+                    fail)))
+
+  (defun execute-application (proc args succeed fail)
+    (cl:cond ((primitive-procedure? proc)
+              (funcall succeed
+                       (apply-primitive-procedure proc args)
+                       fail))
+             ((compound-procedure? proc)
+              (funcall (procedure-body proc)
+                       (extend-environment (procedure-parameters proc)
+                                           args
+                                           (procedure-environment proc))
+                       succeed
+                       fail))
+             (t (error "Unknown procedure type -- EXECUTE-APPLICATION ~S" proc))))
+#+END_SRC
+*** Evaluating ~amb~ expressions
+#+BEGIN_SRC lisp :noweb-ref amb-amb 
+  (defun analyze-amb (exp)
+    (cl:let ((cprocs (mapcar #'analyze (amb-choices exp))))
+      (lambda (env succeed fail)
+        (labels ((try-next (choices)
+                   (cl:if (null choices)
+                          (funcall fail)
+                          (funcall (car choices)
+                                   env
+                                   succeed
+                                   (lambda () (try-next (cdr choices)))))))
+          (try-next cprocs)))))
+#+END_SRC
+*** Driver loop
+#+BEGIN_SRC lisp :noweb-ref amb-driver
+  (defparameter *input-prompt* ";;; Amb-Eval input: ")
+  (defparameter *output-prompt* ";;; Amb-Eval value: ")
+
+  (defun driver-loop ()
+    (labels ((internal-loop (try-again)
+               (prompt-for-input *input-prompt*)
+               (newline)
+               (cl:let ((input (cl:read)))
+                 (cl:cond ((equalp input '(quit))
+                           'goodbye)
+                          ((eq input 'try-again)
+                           (funcall try-again))
+                          (t
+                           (newline)
+                           (cl:format t ";;; Starting a new problem ")
+                           (ambeval input
+                                    ,*the-global-environment*
+                                    ;; ambeval success
+                                    (lambda (val next-alternative)
+                                      (announce-output *output-prompt*)
+                                      (user-print val)
+                                      (internal-loop next-alternative))
+                                    ;; ambeval failure
+                                    (lambda ()
+                                      (announce-output
+                                       ";;; There are no more values of ")
+                                      (user-print input)
+                                      (driver-loop))))))))
+      (internal-loop
+       (lambda ()
+         (newline)
+         (cl:format t ";;; There is no current problem")
+         (driver-loop)))))
+#+END_SRC
+*** Exercise 4.50
+#+BEGIN_SRC lisp
+  (defun random-elt (seq)
+    (cl:elt seq (cl:random (cl:length seq))))
+
+  (defun ramb? (exp) (tagged-list? exp 'ramb))
+
+  (defun analyze-ramb (exp)
+    (cl:let ((cprocs (mapcar #'analyze (amb-choices exp))))
+      (lambda (env succeed fail)
+        (labels ((try-next (choices)
+                   (cl:if (null choices)
+                          (funcall fail)
+                          (cl:let* ((choice (random-elt choices))
+                                    (remaining (cl:remove choice choices :test #'equalp)))
+                            (funcall choice
+                                     env
+                                     succeed
+                                     (lambda () (try-next remaining)))))))
+          (try-next cprocs)))))
+#+END_SRC
+*** Exercise 4.51
+#+BEGIN_SRC lisp
+  (defun permanent-assignment? (exp) (tagged-list? exp 'permanent-set!))
+
+  (defun analyze-permanent-assignment (exp)
+    (cl:let ((var (assignment-variable exp))
+             (vproc (analyze (assignment-value exp))))
+      (lambda (env succeed fail)
+        (funcall vproc
+                 env
+                 (lambda (val fail2)
+                   (set-variable-value! var val env)
+                   (funcall succeed 'ok fail2))
+                 fail))))
+
+  (defun analyze (exp)
+    (cl:cond ((self-evaluating? exp)
+              (analyze-self-evaluating exp))
+             ((quoted? exp) (analyze-quoted exp))
+             ((variable? exp) (analyze-variable exp))
+             ((assignment? exp) (analyze-assignment exp))
+             ((permanent-assignment? exp) (analyze-permanent-assignment exp))
+             ((definition? exp) (analyze-definition exp))
+             ((if? exp) (analyze-if exp))
+             ((lambda? exp) (analyze-lambda exp))
+             ((begin? exp) (analyze-sequence (begin-actions exp)))
+             ((cond? exp) (analyze (cond->if exp)))
+             ((let? exp) (analyze (let->combination exp)))
+             ((amb? exp) (analyze-amb exp))
+             ((ramb? exp) (analyze-ramb exp))
+             ((application? exp) (analyze-application exp))
+             (t
+              (error "Unknown expression type -- ANALYZE ~S" exp))))
+#+END_SRC
+
+The definition of ~analyze-permanent-assignment~ is about the same as the definition for ~analyze-definition~. In both cases, we make assignments without worrying about undoing the results. In the case of ~analyze-definition~ we don't worry about this because we leave it to ~analyze-assignment~ when it's called. In the case of ~analyze-permanent-assignment~ we don't worry about it because we don't want to undo these assignments.
+
+#+BEGIN_SRC scheme
+  (define (list . eles) eles)
+
+  (define count 0)
+
+  (let ((x (an-element-of (quote (a b c))))
+        (y (an-element-of (quote (a b c)))))
+    (set! count (+ count 1))
+    (require (not (eq? x y)))
+    (cons x (cons y (cons count (quote ())))))
+
+  (let ((x (an-element-of (quote (a b c))))
+        (y (an-element-of (quote (a b c)))))
+    (permanent-set! count (+ count 1))
+    (require (not (eq? x y)))
+    (cons x (cons y (cons count (quote ())))))
+#+END_SRC
+
+If we use ~set!~ then the value of count will always be 1 because every time we evaluate ~(require (not (eq? x y)))~ and get FALSE we evaluate ~(amb)~, failing and therefore undoing the assignment we make in the line above. Evaluating ~try-again~ also calls ~(amb)~, similarly undoing the assignment we made to count.
+*** DONE Exercise 4.52
+We can implement ~if-fail~ as a special form:
+
+#+BEGIN_SRC lisp
+  (defun ifail? (exp) (tagged-list? exp 'if-fail))
+
+  (defun ifail-exp (exp) (cadr exp))
+
+  (defun ifail-alt (exp) (caddr exp))
+
+  (defun analyze-ifail (exp)
+    (cl:let ((eproc (analyze (ifail-exp exp)))
+             (aproc (analyze (ifail-alt exp))))
+      (lambda (env succeed fail)
+        (funcall eproc
+                 env
+                 (lambda (exp-value fail2)
+                   (funcall succeed exp-value fail2))
+                 (lambda ()
+                   (funcall aproc
+                            env
+                            succeed
+                            fail))))))
+
+  (defun analyze (exp)
+    (cl:cond ((self-evaluating? exp)
+              (analyze-self-evaluating exp))
+             ((quoted? exp) (analyze-quoted exp))
+             ((variable? exp) (analyze-variable exp))
+             ((assignment? exp) (analyze-assignment exp))
+             ((definition? exp) (analyze-definition exp))
+             ((if? exp) (analyze-if exp))
+             ((lambda? exp) (analyze-lambda exp))
+             ((begin? exp) (analyze-sequence (begin-actions exp)))
+             ((cond? exp) (analyze (cond->if exp)))
+             ((let? exp) (analyze (let->combination exp)))
+             ((amb? exp) (analyze-amb exp))
+             ((ramb? exp) (analyze-ramb exp))
+             ((ifail? exp) (analyze-ifail exp))
+             ((application? exp) (analyze-application exp))
+             (t
+              (error "Unknown expression type -- ANALYZE ~S" exp))))
+
+
+#+END_SRC
+
+Scratchwork. Ignore (saved for record purposes, i.e. keeping track of my thinking).
+
+#+BEGIN_SRC lisp
+  (defun analyze-if (exp)
+    (cl:let ((pproc (analyze (if-predicate exp)))
+             (cproc (analyze (if-consequent exp)))
+             (aproc (analyze (if-alternative exp))))
+      (lambda (env succeed fail)
+        (funcall pproc
+                 env
+                 ;; success continuation for evaluating
+                 ;; the predicate to obtain pred-value
+                 (lambda (pred-value fail2)
+                  (cl:if (true? pred-value)
+                         (funcall cproc env succeed fail2)
+                         (funcall aproc env succeed fail2)))
+                 fail))))
+
+  (defparameter failure 'failure)
+
+  (defun fail? (x) (eq x fail))
+
+  (defun success? (x) (cl:not (fail? x)))
+
+  (ambeval input
+           ,*the-global-environment*
+           ;; ambeval success
+           (lambda (val next-alternative)
+             (announce-output *output-prompt*)
+             (user-print val)
+             (internal-loop next-alternative))
+           ;; ambeval failure
+           (lambda ()
+             (announce-output
+              ";;; There are no more values of ")
+             (user-print input)
+             (driver-loop)
+             fail))
+#+END_SRC
+*** DONE Exercise 4.53
+It will be the list of all prime-sum pairs.
+*** Exercise 4.54
+#+BEGIN_SRC scheme
+  (define (analyze-require exp)
+    (let ((pproc (analyze (require-predicate exp))))
+      (lambda (env succeed fail)
+        (pproc env
+               (lambda (pred-value fail2)
+                 (if (not (true? pred-value))
+                     (fail2)
+                     (succeed 'ok fail2)))
+               fail))))
+#+END_SRC
+* Logic Programming
+** Deductive Information Retrieval
+Note: see exercise 2.20 for dotted-tail notation
+*** Exercise 4.55
+#+BEGIN_SRC scheme
+  ;; a
+  (supervisor ?name (Bitdiddle Ben))
+  ;; b
+  (job ?name (accounting . ?job))
+  ;; c
+  (address ?name (Slumerville . ?address))
+#+END_SRC
+*** Exercise 4.56
+#+BEGIN_SRC scheme
+  ;; a
+  (and (supervisor ?person (Bitdiddle Ben))
+       (address ?person ?address))
+  ;; b
+  (and (salary (Bitdiddle Ben) ?ben-salary)
+       (salary ?person ?salary)
+       (lisp-value < ?salary ?ben-salary))
+  ;; c
+  (and (supervisor ?person ?supervisor)
+       (not (job ?supervisor (computer . ?job))))
+#+END_SRC
+
+Different answer for part c here: http://community.schemewiki.org/?sicp-ex-4.56. I should check the difference after implementing.
+*** Exercise 4.57
+#+BEGIN_SRC scheme
+  (rule (replaceable person2 person1)
+        (and
+         (or
+          (and (job person1 ?job1)
+               (job person2 ?job2)
+               (same ?job1 ?job2))
+          (can-do-job ?job1 ?job2))
+         (not (same person1 person2))))
+
+  ;; a
+  (replaceable (Fect Cy D) ?person)
+
+  ;; b
+  (and (salary ?p1 ?s1)
+       (salary ?p2 ?s2)
+       (lisp-value > ?s1 ?s2)
+       (replaceable ?s1 ?s2))
+#+END_SRC
+*** Exercise 4.58
+#+BEGIN_SRC scheme
+  (rule (big-shot ?person ?division)
+        (and
+         (job ?person (?division . ?type))
+         (not (and
+               (supervisor ?person ?boss)
+               (job ?boss (?division . ?x))))))
+#+END_SRC
+*** Exercise 4.59
+#+BEGIN_SRC scheme
+  ;; a
+  (meeting ?type (?Friday . ?time))
+
+  ;; b
+  (rule (meeting-time ?person ?day-and-time)
+        (or
+         (meeting whole-company ?day-and-time)
+         (and
+          (job ?person (?division . ?type))
+          (meeting ?division ?day-and-time))))
+
+  ;; c
+  (meeting-time (Hacker Alyssa P) (Wednesday . ?time))
+#+END_SRC
+*** Exercise 4.60
+This happens because both results match/satisfy the query. We can assign/instantiate in either order and the query is satisfied.
+
+Maybe there's a way but I don't care to think about it now.
+*** Exercise 4.61
+#+BEGIN_SRC scheme
+  ;;; Query input:
+  (?x next to ?y in (1 (2 3) 4))
+  ;;; Query results:
+  (1 next-to (2 3) in (1 (2 3) 4))
+  ((2 3) next-to 4 in (1 (2 3) 4))
+
+  ;;; Query input:
+  (?x next-to 1 in (2 1 3 1))
+  ;; Query results:
+  (2 next-to 1 in (2 1 3 1))
+  (3 next-to 1 in (2 1 3 1))
+#+END_SRC
+*** Exercise 4.62
+#+BEGIN_SRC scheme
+  (rule (last-pair (?x) (?x)))
+  (rule (last-pair (?y . ?z) ?x)
+        (last-pair ?z (?x)))
+#+END_SRC
+*** Exercise 4.63
+#+BEGIN_SRC scheme
+  (rule (grandson ?g ?s)
+        (and (son ?g ?f)
+             (son ?f ?s)))
+
+  (rule (son ?m ?s)
+        (and (son ?s ?w)
+             (wife ?m ?w)))
+#+END_SRC
+
+Maybe this way of using names doesn't work with the query system? Maybe ~son~ cannot be the name of a rule and a data base assertion? I can't know until finding out more about how the query system works.
+** How the Query System Works
+** Is Logic Programming Mathematical Logic?
+*** Exercise 4.64
+?middle-manager could be bound to anything since the possibilities are not first restricted by the requirement that a ?middle-manager is the boss of the ?staff-person. Hence, the recursive invocation of outranked-by does not terminate because it merely invokes itself recursively every time with no changes. This situation is analogous to a recursive function call that doesn't take some step forward--i.e. doesn't change any state or decrease the scope of possibilities before the call is evaluated.
+*** Exercise 4.65
+For reference, here is the rule:
+
+#+BEGIN_SRC scheme
+  (rule (wheel ?person)
+        (and (supervisor ?middle-manager ?person)
+             (supervisor ?x ?middle-manager)))
+#+END_SRC
+
+Oliver Warbucks is listed four times because there are four ways to prove he is a wheel. This could happen either because he supervises multiple supervisors or he supervises one person who supervises multiple people, or a combination of these two reasons.
+*** Exercise 4.66
++The result of Ben's query will /not/ be a stream of frames; it will be a stream containing streams-of-frames. Ben's mapping expression will have to account for this, extracting not only the designated variable but also the appropriate frames.+ Not true. At one point in the process we do have a stream of streams but these streams are merged into one stream of frames for the final result.
+
+Wrong. See [[http://community.schemewiki.org/?sicp-ex-4.66][here]]. Ben's solution will work for the example query in the exercise. The problem is that it's possible to use his system with queries that will return redundant results--such as the redundant results we got when querying for wheels in [[Exercise 4.65]]. In this case, the results of his accumulation function will be innacurate since it will be counting some items multiple times. Ben needs a way to filter out repeated results.
+*** PLANNED Exercise 4.67
+Here's one dumb way to do this (dumber than what the text suggests): store the current query--perhaps merely the symbol for the rule being called?--somewhere and keep an integer variable around tracking how many times the current query has been called without interruption. If it exceeds an arbitrarily selected amount, we end the process with an error. This would be kind of like the recursion-depth errors you get in some languages, e.g. Python.
+
+There's probably a more sophisticated way to implement this using more information that will yield better results. I'll revisit this after implementing qeval.
+*** Exercise 4.68
+~append-to-form~ definition for reference
+
+#+BEGIN_SRC scheme
+  (rule (append-to-form () ?y ?y))
+  (rule (append-to-form (?u . ?v) ?y (?u . ?z))
+        (append-to-form ?v ?y ?z))
+#+END_SRC
+
+first attempt answer
+
+#+BEGIN_SRC scheme
+  (rule (reverse (?x) (?x)))
+  (rule (reverse (?u . ?v) ?y)
+        (append-to-form (reverse ?v) (?u) ?y))
+#+END_SRC
+
+Can we actually do a nexted rule like above? I.e. is ~(append-to-form (reverse ...) ...)~ a valid expression in the query language? After all, ~reverse~ isn't really a function that returns a result, right? So what does a rule expression "evaluate" to? A list of solutions?
+
+Anyways, there's a more important problem: ~reverse~ takes two arguments but I only supplied one. We need to introduce a new variable as the second argument which will be bound the the result of reversing ?v:
+
+#+BEGIN_SRC scheme
+  (rule (reverse (?x) (?x)))
+  (rule (reverse (?u . ?v) ?y)
+        (and (reverse ?v ?z)
+             (append-to-form ?z (?u) ?y)))
+#+END_SRC
+
+But this could introduce the same kind of endless recursion we saw in [[Exercise 4.64]]. Again, we need to limit the scope of our search or take a recursive step forward. So, we swap the order--much like we could in [[Exercise 4.64]]:
+
+#+BEGIN_SRC scheme
+  (rule (reverse (?x) (?x)))
+  (rule (reverse (?u . ?v) ?y)
+        (and (append-to-form ?z (?u) ?y)
+             (reverse ?v ?z)))
+#+END_SRC
+*** Exercise 4.69
+skip (boring)
+** Implementing the Query System
+I had to implement SICP streams and tables in CL to do this section. See the following:
+
+[[An Interpreter with Lazy Evaluation]]
+[[file:streams.org]]
+[[file:tables.org]]
+
+Here are some operations we need that use the tables.org library:
+
+#+BEGIN_SRC lisp
+  (defparameter *query-table* (make-table))
+
+  (defun get (k1 k2) (lookup k1 k2 *query-table*))
+
+  (defun put (k1 k2 val) (insert! k1 k2 val *query-table*))
+#+END_SRC
+*** The Driver Loop and Instantiation
+#+BEGIN_SRC lisp
+  (defparameter *input-prompt* ";;; Query input: ")
+  (defparameter *output-prompt* ";;; Query results: ")
+
+  (defun query-driver-loop ()
+    (prompt-for-input *input-prompt*)
+    (newline)
+    (cl:let ((q (query-syntax-process (cl:read))))
+      (cl:cond ((eq q '(quit))
+                'goodbye)
+               ((assertion-to-be-added? q)
+                (add-rule-or-assertion! (add-assertion-body q))
+                (newline)
+                (cl:format t "Assertion added to data base.")
+                (query-driver-loop))
+               (t
+                (newline)
+                (display-output-prompt *output-prompt*)
+                (display-stream
+                 (stream-map
+                  (lambda (frame)
+                    (instantiate q
+                                 frame
+                                 (lambda (v f)
+                                   (contract-question-mark v))))
+                  (qeval q (singleton-stream nil))))
+                (query-driver-loop)))))
+
+  (defun instantiate (exp frame unbound-var-handler)
+    (labels ((copy (exp)
+               (cl:cond ((var? exp)
+                         (cl:let ((binding (binding-in-frame exp frame)))
+                           (cl:if binding
+                                  (copy (binding-value binding))
+                                  (funcall unbound-var-handler
+                                           exp
+                                           frame))))
+                        ((consp exp)
+                         (cons (copy (car exp)) (copy (cdr exp))))
+                        (t exp))))
+      (copy exp)))
+#+END_SRC
+*** The Evaluator
+#+BEGIN_SRC lisp
+  (defun qeval (query frame-stream)
+    (cl:let ((qproc (get (type query) 'qeval)))
+      (cl:if qproc
+             (funcall qproc
+                      (contents query)
+                      frame-stream)
+             (simple-query query frame-stream))))
+#+END_SRC
+
+*Simple queries*
+
+#+BEGIN_SRC lisp
+  (defun simple-query (query-pattern frame-stream)
+    (stream-flatmap
+     (lambda (frame)
+       (stream-append-delayed
+        (find-assertions query-pattern frame)
+        (delay (apply-rules query-pattern frame))))
+     frame-stream))
+#+END_SRC
+
+*Compound queries*
+
+#+BEGIN_SRC lisp
+  (defun conjoin (conjuncts frame-stream)
+    (cl:if (empty-conjunction? conjuncts)
+           frame-stream
+           (conjoin (rest-conjuncts conjuncts)
+                    (qeval (first-conjunct conjuncts)
+                           frame-stream))))
+
+  (put 'and 'qeval #'conjoin)
+
+  (defun disjoin (disjuncts frame-stream)
+    (cl:if (empty-disjunction? disjuncts)
+           ,*the-empty-stream*
+           (interleave-delayed
+            (qeval (first-disjunct disjuncts) frame-stream)
+            (delay (disjoin (rest-disjuncts disjuncts)
+                            frame-stream)))))
+
+  (put 'or 'qeval #'disjoin)
+#+END_SRC
+
+*Filters*
+
+#+BEGIN_SRC lisp
+  (defun negate (operands frame-stream)
+    (stream-flatmap
+     (lambda (frame)
+       (cl:if (stream-null? (qeval (negated-query operands)
+                                   (singleton-stream frame)))
+              (singleton-stream frame)
+              ,*the-empty-stream*))
+     frame-stream))
+
+  (put 'not 'qeval #'negate)
+
+  (defun lisp-value (call frame-stream)
+    (stream-flatmap
+     (lambda (frame)
+       (cl:if (execute
+               (instantiate call
+                            frame
+                            (lambda (v f) (error "Unknown pat var -- LISP-VALUE ~a" v))))
+              (singleton-stream frame)
+              ,*the-empty-stream*))
+     frame-stream))
+
+  (put 'lisp-value 'qeval #'lisp-value)
+
+  (defun execute (exp)
+    (apply (eval (predicate exp) *the-global-environment*)
+           (args exp)))
+
+  (defun always-true (ignore frame-stream) frame-stream)
+
+  (put 'always-true 'qeval #'always-true)
+#+END_SRC
+*** Finding Assertions by Pattern Matching
+#+BEGIN_SRC lisp
+  (defun find-assertions (pattern frame)
+    (stream-flatmap (lambda (datum)
+                      (check-an-assertion datum pattern frame))
+                    (fetch-assertions pattern frame)))
+
+  (defun check-an-assertion (assertion query-pat query-frame)
+    (cl:let ((match-result
+               (pattern-match query-pat assertion query-frame)))
+      (cl:if (eq match-result 'failed)
+             ,*the-empty-stream*
+             (singleton-stream match-result))))
+
+  (defun pattern-match (pat dat frame)
+    (cl:cond ((eq frame 'failed) 'failed)
+             ((eq pat dat) frame)
+             ((var? pat) (extend-if-consistent pat dat frame))
+             ((cl:and (consp pat) (consp dat))
+              (pattern-match (cdr pat)
+                             (cdr dat)
+                             (pattern-match (car pat)
+                                            (car dat)
+                                            frame)))
+             (t 'failed)))
+
+  (defun extend-if-consistent (var dat frame)
+    (cl:let ((binding (binding-in-frame var frame)))
+      (cl:if binding
+             (pattern-match (binding-value binding) dat frame)
+             (extend var dat frame))))
+#+END_SRC
+*** Rules and Unification
+#+BEGIN_SRC lisp
+  (defun apply-rules (pattern frame)
+    (stream-flatmap (lambda (rule)
+                      (apply-a-rule rule pattern frame))
+                    (fetch-rules pattern frame)))
+
+  (defun apply-a-rule (rule query-pattern query-frame)
+    (cl:let* ((clean-rule (rename-variables-in rule))
+              (unify-result
+                (unify-match query-pattern
+                             (conclusion clean-rule)
+                             query-frame)))
+      (cl:if (eq unify-result 'failed)
+             ,*the-empty-stream*
+             (qeval (rule-body clean-rule)
+                    (singleton-stream unify-result)))))
+
+  (defun rename-variables-in (rule)
+    (cl:let ((rule-application-id (new-rule-application-id)))
+      (labels ((tree-walk (exp)
+                 (cl:cond ((var? exp)
+                           (make-new-variable exp rule-application-id))
+                          ((consp exp)
+                           (cons (tree-walk (car exp))
+                                 (tree-walk (cdr exp))))
+                          (t exp))))
+        (tree-walk rule))))
+
+  (defun unify-match (p1 p2 frame)
+    (cl:cond ((eq frame 'failed) 'failed)
+             ((equalp p1 p2) frame)
+             ((var? p1) (extend-if-possible p1 p2 frame))
+             ((var? p2) (extend-if-possible p2 p1 frame)) ; ***
+             ((cl:and (consp p1) (consp p2))
+              (unify-match (cdr p1)
+                           (cdr p2)
+                           (unify-match (car p1)
+                                        (car p2)
+                                        frame)))
+             (t 'failed)))
+
+  (defun extend-if-possible (var val frame)
+    (cl:let ((binding (binding-in-frame var frame)))
+      (cl:cond (binding
+                (unify-match (binding-value binding) val frame))
+               ((var? val)                ; ***
+                (cl:let ((binding (binding-in-frame val frame)))
+                  (cl:if binding
+                         (unify-match var (binding-value binding) frame)
+                         (extend var val frame))))
+               ((depends-on? val var frame) ; ***
+                'failed)
+               (t (extend var val frame)))))
+
+  (defun depends-on? (exp var frame)
+    (labels ((tree-walk (e)
+               (cl:cond ((var? e)
+                         (cl:if (equalp var e)
+                                t
+                                (cl:let ((b (binding-in-frame e frame)))
+                                  (cl:if b
+                                         (tree-walk (binding-value b))
+                                         nil))))
+                        ((consp e)
+                         (cl:or (tree-walk (car e))
+                                (tree-walk (cdr e))))
+                        (t nil))))
+      (tree-walk exp)))
+#+END_SRC
+*** Maintaining the Data Base
+#+BEGIN_SRC lisp
+  (defparameter *the-assertions* *the-empty-stream*)
+
+  (defun fetch-assertions (pattern frame)
+    (cl:if (use-index? pattern)
+           (get-indexed-assertions pattern)
+           (get-all-assertions)))
+
+  (defun get-all-assertions () *the-assertions*)
+
+  (defun get-indexed-assertions (pattern)
+    (get-stream (index-key-of pattern) 'assertion-stream))
+
+  (defun get-stream (key1 key2)
+    (cl:let ((s (get key1 key2)))
+      (cl:if s s *the-empty-stream*)))
+
+  (defparameter *the-rules* *the-empty-stream*)
+
+  (defun fetch-rules (pattern frame)
+    (cl:if (use-index? pattern)
+           (get-indexed-rules pattern)
+           (get-all-rules)))
+
+  (defun get-all-rules () *the-rules*)
+
+  (defun get-indexed-rules (pattern)
+    (stream-append
+     (get-stream (index-key-of pattern) 'rule-stream)
+     (get-stream '? 'rule-stream)))
+
+  (defun add-rule-or-assertion! (assertion)
+    (cl:if (rule? assertion)
+           (add-rule! assertion)
+           (add-assertion! assertion)))
+
+  (defun add-assertion! (assertion)
+    (store-assertion-in-index assertion)
+    (cl:let ((old-assertions *the-assertions*))
+      (setf *the-assertions*
+            (cons-stream assertion old-assertions))
+      'ok))
+
+  (defun add-rule! (rule)
+    (store-rule-in-index rule)
+    (cl:let ((old-rules *the-rules*))
+      (setf *the-rules*
+            (cons-stream rule old-rules))
+      'ok))
+
+  (defun store-assertion-in-index (assertion)
+    (cl:if (indexable? assertion)
+           (cl:let* ((key (index-key-of assertion))
+                     (current-assertion-stream
+                       (get-stream key 'assertion-stream)))
+             (put key
+                  'assertion-stream
+                  (cons-stream assertion
+                               current-assertion-stream)))))
+
+  (defun store-rule-in-index (rule)
+    (cl:let ((pattern (conclusion rule)))
+      (cl:if (indexable? pattern)
+             (cl:let* ((key (index-key-of pattern))
+                       (current-rule-stream
+                         (get-stream key 'rule-stream)))
+               (put key
+                    'rule-stream
+                    (cons-stream rule
+                                 current-rule-stream))))))
+
+  (defun indexable? (pat)
+    (cl:or (constant-symbol? (car pat))
+           (var? (car pat))))
+
+  (defun index-key-of (pat)
+    (cl:let ((key (car pat)))
+      (cl:if (var? key) '? key)))
+
+  (defun use-index? (pat)
+    (constant-symbol? (car pat)))
+#+END_SRC
+*** Stream Operations
+#+BEGIN_SRC lisp
+  (defun stream-append-delayed (s1 delayed-s2)
+    (cl:if (stream-null? s1)
+           (force delayed-s2)
+           (cons-stream
+            (stream-car s1)
+            (stream-append-delayed (stream-cdr s1) delayed-s2))))
+
+  (defun interleave-delayed (s1 delayed-s2)
+    (cl:if (stream-null? s1)
+           (force delayed-s2)
+           (cons-stream
+            (stream-car s1)
+            (interleave-delayed (force delayed-s2)
+                                (delay (stream-cdr s1))))))
+
+  (defun stream-flatmap (proc s)
+    (flatten-stream (stream-map proc s)))
+
+  (defun flatten-stream (s)
+    (cl:if (stream-null? s)
+           ,*the-empty-stream*
+           (interleave-delayed
+            (stream-car s)
+            (delay (flatten-stream (stream-cdr s))))))
+
+  (defun singleton-stream (x)
+    (cons-stream x *the-empty-stream*))
+#+END_SRC
+*** Query Syntax Procedures
+See 2.4.2.
+
+#+BEGIN_SRC lisp
+  ;;; expression syntax
+  (defun type (exp)
+    (cl:if (consp exp)
+           (car exp)
+           (error "Unknown expression TYPE ~a" exp)))
+
+  (defun contents (exp)
+    (cl:if (consp exp)
+           (cdr exp)
+           (error "Unknown expression CONTENTS ~a" exp)))
+
+  ;;; driver-loop assertions
+  (defun assertion-to-be-added? (exp)
+    (eq (type exp) 'assert!))
+
+  (defun add-assertion-body (exp)
+    (car (contents exp)))
+
+  ;;; and, or, not, lisp-value special forms
+  (defun empty-conjunction? (exps) (null exps))
+  (defun first-conjunct (exps) (car exps))
+  (defun rest-conjuncts (exps) (cdr exps))
+
+  (defun empty-disjunction? (exps) (null exps))
+  (defun first-disjunct (exps) (car exps))
+  (defun rest-disjuncts (exps) (cdr exps))
+
+  (defun negated-query (exps) (car exps))
+
+  (defun predicate (exps) (car exps))
+  (defun args (exps) (cdr exps))
+
+  ;;; rule syntax
+  (defun rule? (statement)
+    (tagged-list? statement 'rule))
+
+  (defun conclusion (rule) (cadr rule))
+
+  (defun rule-body (rule)
+    (cl:if (null (cddr rule))
+           '(always-true)
+           (caddr rule)))
+
+  ;;; internal<->external representation of pattern variables
+  (defun query-syntax-process (exp)
+    (map-over-symbols #'expand-question-mark exp))
+
+  (defun map-over-symbols (proc exp)
+    (cl:cond ((consp exp)
+              (cons (map-over-symbols proc (car exp))
+                    (map-over-symbols proc (cdr exp))))
+             ((symbolp exp) (funcall proc exp))
+             (t exp)))
+
+  (defun expand-question-mark (symbol)
+    (cl:let ((chars (stringify symbol)))
+      (cl:if (cl:string= (cl:subseq chars 0 1) "?")
+             (cl:list '?
+                      (cl:intern (cl:subseq chars 1)))
+             symbol)))
+
+  ;;; vars and constants
+  (defun var? (exp)
+    (tagged-list? exp '?))
+
+  (defun constant-symbol? (exp) (symbolp exp))
+
+  ;;; unique variables
+  (defparameter *rule-counter* 0)
+
+  (defun new-rule-application-id ()
+    (cl:incf *rule-counter*)
+    ,*rule-counter*)
+
+  (defun make-new-variable (var rule-application-id)
+    (cons '? (cons rule-application-id (cdr var))))
+
+  ;;; internal->external var representation for printing
+  (defun string-append (&rest strings)
+    (cl:apply #'cl:concatenate 'cl:string strings))
+
+  (defun stringify (x)
+    (cl:format nil "~a" x))
+
+  (defun contract-question-mark (variable)
+    (cl:intern
+     (string-append "?"
+                    (cl:if (numberp (cadr variable))
+                           (string-append (stringify (caddr variable))
+                                          "-"
+                                          (stringify (cadr variable)))
+                           (stringify (cadr variable))))))
+#+END_SRC
+*** Frames and Bindings
+#+BEGIN_SRC lisp
+  (defun make-binding (variable value)
+    (cons variable value))
+
+  (defun binding-variable (binding) (car binding))
+
+  (defun binding-value (binding) (cdr binding))
+
+  (defun binding-in-frame (variable frame)
+    (cl:assoc variable frame))
+
+  (defun extend (variable value frame)
+    (cons (make-binding variable value) frame))
+#+END_SRC
+*** Exercises
+**** Exercise 4.70
+Setting ~*the-assertions*~ without a let will create an "infinite", self-referring stream. I.e. the ~cdr~ of the stream will point to the beginning of the stream. In contrast, setting the ~cdr~ of ~*the-assertions*~ to a finite stream such as ~old-assertions~ creates no such infinite list.
+**** TODO Exercise 4.71
+See 4.4.4.6, [[Stream Operations]], pg. 482.
+**** TODO Exercise 4.72
+**** TODO Exercise 4.73
