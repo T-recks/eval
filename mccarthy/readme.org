@@ -1,0 +1,3 @@
+- LISP in itself: lisp.lisp
+- auxilary helper functions to define LISP: aux.lisp
+- example programs from LISP manual section 1.6: programs.lisp
