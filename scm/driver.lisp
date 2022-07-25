@@ -4,8 +4,6 @@ A repl for Scheme.
 
 (defparameter *input-prompt* "> ")
 
-(defparameter *output-prompt* "")
-
 (defun prompt-for-input (string)
   (cl:format t "~&~A" string))
 
@@ -24,12 +22,13 @@ A repl for Scheme.
    (cl:let ((input (cl:read)))
      (cl:if (equalp input '(quit))
             (cl:return 'goodbye)
-            (user-print (funcall evaluator input env))))))
+            (print (funcall evaluator input env))))))
 
-(defun user-print (object)
-  (cl:if (compound-procedure? object)
-         (cl:format t "~A" (cl:list 'compound-procedure
-                                     (procedure-parameters object)
-                                     (procedure-body object)
-                                     '<procedure-env>))
-         (cl:format t "~A" object)))
+(defmethod print (object)
+  (cl:format t "~A" object))
+
+(defmethod print ((object procedure))
+  (cl:format t "~A" (cl:list 'compound-procedure
+                             (procedure-parameters object)
+                             (procedure-body object)
+                             '<procedure-env>)))

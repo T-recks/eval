@@ -2,21 +2,20 @@
 A syntax analyzing evaluator for Scheme.
 |#
 
-(defun eval-analyze (exp env)
+(defun eval-analyze (exp &optional (env *the-global-environment*))
   (funcall (analyze exp) env))
 
 (defun analyze (exp)
-  (cl:cond ((self-evaluating? exp)
-            (analyze-self-evaluating exp))
-           ((quoted? exp) (analyze-quoted exp))
-           ((variable? exp) (analyze-variable exp))
-           ((assignment? exp) (analyze-assignment exp))
-           ((definition? exp) (analyze-definition exp))
-           ((if? exp) (analyze-if exp))
-           ((lambda? exp) (analyze-lambda exp))
-           ((begin? exp) (analyze-sequence (begin-actions exp)))
-           ((cond? exp) (analyze (cond->if exp)))
-           ((application? exp) (analyze-application exp))
+  (cl:cond ((self-evaluating-p exp) (analyze-self-evaluating exp))
+           ((variablep exp) (analyze-variable exp))
+           ((quotedp exp) (analyze-quoted exp))
+           ((assignmentp exp) (analyze-assignment exp))
+           ((definitionp exp) (analyze-definition exp))
+           ((ifp exp) (analyze-if exp))
+           ((lambdap exp) (analyze-lambda exp))
+           ((beginp exp) (analyze-sequence (begin-actions exp)))
+           ((condp exp) (analyze (cond->if exp)))
+           ((applicationp exp) (analyze-application exp))
            (t
             (error "Unknown expression type -- ANALYZE ~S" exp))))
 
@@ -51,7 +50,7 @@ A syntax analyzing evaluator for Scheme.
            (cproc (analyze (if-consequent exp)))
            (aproc (analyze (if-alternative exp))))
     (lambda (env)
-      (cl:if (true? (funcall pproc env))
+      (cl:if (truep (funcall pproc env))
              (funcall cproc env)
              (funcall aproc env)))))
 
@@ -82,9 +81,9 @@ A syntax analyzing evaluator for Scheme.
                                    aprocs)))))
 
 (defun execute-application (proc args)
-  (cl:cond ((primitive-procedure? proc)
+  (cl:cond ((primitive-p proc)
             (apply-primitive-procedure proc args))
-           ((compound-procedure? proc)
+           ((compound-procedure-p proc)
             (funcall (procedure-body proc)
                      (extend-environment (procedure-parameters proc)
                                          args
