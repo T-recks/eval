@@ -4,3 +4,5 @@ Interpreters, etc., for Lispy languages like Scheme.
   - implementations of the interpreter and exercise answers from SICP
 - scm/
   - a scheme interpreter based on the SICP interpreter but modified and extended
+- mccarthy/
+  - an implementation of John McCarthy's LISP in Common Lisp, taken form the Lisp 1.5 Programmer's Manual
