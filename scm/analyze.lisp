@@ -57,7 +57,9 @@ A syntax analyzing evaluator for Scheme.
 (defun analyze-lambda (exp)
   (cl:let ((vars (lambda-parameters exp))
            (bproc (analyze-sequence (lambda-body exp))))
-    (lambda (env) (make-procedure vars bproc env))))
+    (lambda (env) (make-procedure :parameters vars
+                             :body bproc
+                             :environment env))))
 
 (defun analyze-sequence (exps)
   (labels ((sequentially (proc1 proc2)

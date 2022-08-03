@@ -60,3 +60,5 @@ A basic Scheme evaluator.
       (eval (definition-value exp) env)
     env)
   'ok)
+
+(define-primitive! 'apply #'scm:apply *the-global-environment*)

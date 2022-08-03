@@ -20,7 +20,8 @@ Presently no control context abstractions are explicitly defined, i.e. the inter
    :t :nil :equalp :numberp :listp :consp :symbolp :stringp :eq :null ; truth, predicates
    :cons :car :cdr :cadr :caadr :cdadr :cddr :caddr :cdddr :cadddr ; cons cells
    :mapcar :progn
-   :+ :* :- :/ :=
+   :+ :* :- :/ := :<
+   :make-hash-table :gethash
    ))
 
 (in-package "SCHEME")
@@ -50,67 +51,53 @@ Presently no control context abstractions are explicitly defined, i.e. the inter
 
 (defun compound-procedure-p (p) (procedure-p p))
 
-(defun enclosing-environment (env) (cdr env))
-
-(defun first-frame (env) (car env))
-
 (defconstant +the-empty-environment+ nil)
 
-(defstruct frame
-  variables
-  values)
+(defstruct environment
+  first-frame
+  enclosing)
+
+(defun make-frame (vars vals)
+  (cl:let ((frame (make-hash-table)))
+    (cl:labels ((iter (vrs vls)
+                  (cl:cond ((null vrs) frame)
+                           (t (add-binding-to-frame! (car vrs) (car vls) frame)
+                              (iter (cdr vrs) (cdr vls))))))
+      (iter vars vals))))
 
 (defun add-binding-to-frame! (var val frame)
-  (setf (frame-variables frame) (cons var (frame-variables frame))
-        (frame-values frame) (cons val (frame-values frame))))
+  (setf (gethash var frame) val))
 
 (defun extend-environment (vars vals base-env)
   (cl:if (cl:= (cl:length vars) (cl:length vals))
-         (cons (make-frame :variables vars :values vals) base-env)
+         (make-environment :first-frame (make-frame vars vals)
+                           :enclosing base-env)
          (cl:if (cl:< (cl:length vars) (cl:length vals))
                 (error "Too many arguments supplied ~S ~S" vars vals)
                 (error "Too few arguments supplied ~S ~S" vars vals))))
 
 (defun lookup-variable-value (var env)
   (labels ((env-loop (env)
-             (labels ((scan (vars vals)
-                        (cl:cond ((null vars)
-                                  (env-loop (enclosing-environment env)))
-                                 ((eq var (car vars))
-                                  (car vals))
-                                 (t (scan (cdr vars) (cdr vals))))))
-               (cl:if (eq env +the-empty-environment+)
-                      (error "Unbound variable ~S" var)
-                      (cl:let ((frame (first-frame env)))
-                        (scan (frame-variables frame)
-                              (frame-values frame)))))))
+             (cl:if (eq env +the-empty-environment+)
+                    (error "Unbound variable ~S" var)
+                    (cl:let ((val (gethash var (environment-first-frame env))))
+                      (cl:if val
+                             val
+                             (env-loop (environment-enclosing env)))))))
     (env-loop env)))
 
 (defun set-variable-value! (var val env)
   (labels ((env-loop (env)
-             (labels ((scan (vars vals)
-                        (cl:cond ((null vars)
-                                  (env-loop (enclosing-environment env)))
-                                 ((eq var (car vars))
-                                  (setf (car vals) val))
-                                 (t (scan (cdr vars) (cdr vals))))))
-               (cl:if (eq env +the-empty-environment+)
-                      (error "Unbound variable -- SET! ~S" var)
-                      (cl:let ((frame (first-frame env)))
-                        (scan (frame-variables frame)
-                              (frame-values frame)))))))
+             (cl:if (eq env +the-empty-environment+)
+                    (error "Unbound variable -- SET! ~S" var)
+                    (cl:let ((old-val (gethash var (environment-first-frame env))))
+                      (cl:if old-val
+                             (setf (gethash var (environment-first-frame env)) val)
+                             (env-loop (environment-enclosing env)))))))
     (env-loop env)))
 
 (defun define-variable! (var val env)
-  (cl:let ((frame (first-frame env)))
-    (labels ((scan (vars vals)
-               (cl:cond ((null vars)
-                         (add-binding-to-frame! var val frame))
-                        ((eq var (car vars))
-                         (setf (car vals) val))
-                        (t (scan (cdr vars) (cdr vals))))))
-      (scan (frame-variables frame)
-            (frame-values frame)))))
+  (add-binding-to-frame! var val (environment-first-frame env)))
 ;; end data structures
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -137,13 +124,12 @@ Presently no control context abstractions are explicitly defined, i.e. the inter
            false)))
 
 (defparameter *primitive-predicate-names*
-  '((= cl:=)
-    (< cl:<)
-    (pair? cl:consp)
-    (null? cl:null)
-    (eq? cl:eq)
-    (number? cl:numberp)
-    )
+  '((= =)
+    (< <)
+    (pair? consp)
+    (null? null)
+    (eq? eq)
+    (number? numberp))
   "In each name-pair, the first symbol is what the name should be in the Scheme evaluator and the second symbol is the name for the Common Lisp predicate to use.")
 
 (defparameter *primitive-predicates*
@@ -152,16 +138,15 @@ Presently no control context abstractions are explicitly defined, i.e. the inter
                      (cl-pred->scm-pred (cl:symbol-function (cadr name-pair)))))
           *primitive-predicate-names*))
 
-(defparameter *primitive-procedures*
+(defvar *primitive-procedures*
   `((car ,#'car)
     (cdr ,#'cdr)
     (cons ,#'cons)
-    (+ ,#'cl:+)
-    (- ,#'cl:-)
-    (* ,#'cl:*)
-    (/ ,#'cl:/)
-    ,@*primitive-predicates*
-    ))
+    (+ ,#'+)
+    (- ,#'-)
+    (* ,#'*)
+    (/ ,#'/)
+    ,@*primitive-predicates*))
 
 (defun primitive-procedure-names ()
   (mapcar #'car *primitive-procedures*))
@@ -176,6 +161,11 @@ Presently no control context abstractions are explicitly defined, i.e. the inter
 (defvar *the-global-environment* (setup-environment))
 
 (defun reset-global-environment! () (setf *the-global-environment* (setup-environment)))
+
+(defun define-primitive! (var pval env)
+  (setf (cadr (cl:assoc var *primitive-procedures*))
+        pval)
+  (define-variable! var (make-primitive :implementation pval) env))
 ;; end run-program
 
 ;;;;;;;;;;;;
