@@ -1,3 +1,10 @@
+#|
+This file contains auxilary functions that McCarthy defines in order to make the definition
+of the universal functions more succinct. They use only the same primitives described in lisp.lisp.
+|#
+
+(defun null (x) (cl:eq x nil))
+
 (defun equal (x y)
   (cl:cond ((cl:atom x)
             (cl:cond ((cl:atom y)
@@ -8,7 +15,7 @@
            (t nil)))
 
 (defun pairlist (x y a)
-  (cl:cond ((cl:null x) a)
+  (cl:cond ((null x) a)
            (t (cl:cons (cl:cons (cl:car x) (cl:car y))
                        (pairlist (cl:cdr x) (cl:cdr y) a)))))
 

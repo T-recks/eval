@@ -1,9 +1,12 @@
 #|
 "...Lisp in itself. These were “Maxwell’s Equations of Software!” This is the whole world of programming in a few lines that I can put my hand over."
+
+McCarthy shows on page 13 of the Lisp 1.5 Programmers Manual how to implement a complete programming language using five primitive functions and one special form. The five primitive functions are car, cdr, cons, atom, and eq. The primitive form is cond. Where these are used to implement LISP below, they are prefixed with the CL package to indicate they are primatives taken as given. 
 |#
 
 (cl:defpackage :lisp
   (:export
+   :eval
    :evalquote)
   (:import-from
    :cl
@@ -13,6 +16,9 @@
 
 (in-package "LISP")
 
+;; "Evalquote is a vailable to the programmer as a LISP function -- thus, one may now write
+;; "(EVALQUOTE APPEND ((A) (B C D)))" rather than
+;; "(EVAL (QUOTE (APPEND (A) (B C D))) NIL)" should one desire so." (96).
 (defmacro evalquote (fn x)
   `(apply ',fn ',x nil))
 
@@ -48,6 +54,6 @@
            (t (eval-cons (cl:cdr c) a))))
 
 (defun eval-list (m a)
-  (cl:cond ((cl:null m) nil)
+  (cl:cond ((null m) nil)
            (t (cl:cons (eval (cl:car m) a)
                        (eval-list (cl:cdr m) a)))))
