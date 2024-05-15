@@ -2,6 +2,7 @@
 This file contains auxilary functions that McCarthy defines in order to make the definition
 of the universal functions more succinct. They use only the same primitives described in lisp.lisp.
 |#
+(in-package "LISP")
 
 (defun null (x) (cl:eq x nil))
 
