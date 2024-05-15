@@ -1,5 +1,5 @@
 ;;; File: programs.lisp
-;;; Description: examples LISP programs
+;;; Description: example LISP programs
 
 (in-package "LISP")
 
