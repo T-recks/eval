@@ -17,8 +17,7 @@
       '((head . (lambda (c) (car c)))))
 
 ;; Example 3a
-;; Demonstrates: recursive function definition,
-;; recursive symbol definition,
+;; Demonstrates: recursive function definition
 ;; => (A B C D)
 (eval '(append (quote (A)) (quote (B C D)))
       '((append . (lambda (x y)
@@ -28,7 +27,8 @@
                                  (append (cdr x) y))))))))
 
 ;; Example 3b
-;; Demonstrates: definition of T
+;; Demonstrates: recursive symbol definition,
+;; definition of T
 ;; => (A B C D)
 (eval '(append (quote (A)) (quote (B C D)))
       '((t . t)                   ; T defined self-referentially here.
