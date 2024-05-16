@@ -37,14 +37,52 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
                      (t (apply (eval fn a) x a))))
            ((cl:eq (cl:car fn) 'lambda)
             (eval (cl:caddr fn) (pairlist (cl:cadr fn) x a)))
-           ;; Note: this effectively completes the definition of  APPLY.
-           ;; LABEL is useless but included below for completeness.
-           ;; It is essentially a holdover from McCarthy's original 1960 paper on LISP, but
-           ;; all sources on LISP 1.5 state that in practice it is unused in user programs.
-           ;; LABEL is redundant with the inclusion of environments,
-           ;; denoted by the symbol A in this implementation and the Manual. Environments
-           ;; in turn are made more useable in LISP 1.5 by the DEFINE "pseudo-function."
-           ;; See the end of this file for more commentary.
+           ;; Note: this effectively completes the definition of APPLY. The only thing left is handling of LABEL forms.
+           ;; From here, skip to the definition of EVAL to continue understanding LISP. Or read on if you dare...
+           ;;
+           ;; LABEL is useless in a practical LISP programming system but included below for completeness.
+           ;; It is essentially a holdover from McCarthy's original 1960 paper defining LISP 1.0, but
+           ;; all sources on LISP 1.5 state that in practice it was not used in user programs (TODO: insert sources here).
+           ;; This was because (in the author's opinion) LABEL is redundant with the addition of mutable environments in LISP 1.5,
+           ;; denoted by the parameter A in this implementation and in the Manual.
+           ;; Environments in turn are made more usable in LISP 1.5 by the DEFINE "pseudo-function"
+           ;; (see the end of this file for more commentary on DEFINE).
+           ;; 
+           ;; Furthermore, LABEL is redundant (in the author's opinion) with Scheme's LET, which is not present in LISP 1.5.
+           ;;
+           ;; LISP 1.0 included no mutation, so environments were treated only as expressions, not mutable variables.
+           ;; Thus, LABEL was useful for constructing new environment expressions from other environment expressions
+           ;; in a purely functional, expression-oriented style.
+           ;;
+           ;; The original 1960 LISP was a purely functional language in the modern sense, but as LISP grew in
+           ;; adoption and relevance it rapidly transformed into a mutable, multi-paradigm language, as we can start to see already
+           ;; in the 1.5 version.
+           ;;
+           ;; This difference between the 1.0 and 1.5 versions of LISP highlights a tension between the two main camps in early language design.
+           ;; The former took its primary inspiration from LISP 1.0 and the Lambda Calculus, focusing on principled, purely functional
+           ;; formalisms while 
+           ;; the latter took its primary inspiration from LISP 1.5, focusing on practical, human-friendly programming systems.
+           ;; Each camp extended various olive branches to the other.
+           ;; Notice the stereotypical LISP binary tree style of this historical development ;)
+           ;; 
+           ;; These two camps constitute the main axis of early programming language design.
+           ;; The first branch in this tree brought us Scheme, ML, Miranda, and Haskell, which embodied more sophisticated versions of LISP 1.0
+           ;; purely functional style, while attempting to meet the other camp (i.e. the practical programmer) in the middle with principled and
+           ;; constrained approaches to mutability, culminating in Monadic IO.
+           ;; 
+           ;; The second brought us Scheme, Common LISP, Smalltalk, and then CLOS.
+           ;; TODO: elaborate on what these languages contributed and how they embody the second leaf... I'm too tired to do it right now.
+           ;;
+           ;; Yes, Scheme is in both camps. Much like LISP itself.
+           ;;
+           ;; Almost everything interesting about programming language design in the 20th century can be easily understood as
+           ;; a precursor to LISP or a reaction to LISP, as various programming researchers sought to answer either the question
+           ;; "How can we do what LISP 1.0 did but better?" or "How can we do what LISP 1.5 did but better?"
+           ;; Where "better" equals more parsimoniously, in a more principled fashion, more practically, providing more expressive
+           ;; power to the programmer, more efficiently, etc. etc...
+           ;;
+           ;; Here ends the author's diatribe on the profundity of the symbol known as LABEL and its obsolescence in LISP.
+           ;; Here begins the evaluator's definition of LABEL, the elder fossil of LISP formalisms.
            ((cl:eq (cl:car fn) 'label)
             (apply (cl:caddr fn) x (cl:cons (cl:cons (cl:cadr fn)
                                                      (cl:caddr fn))
