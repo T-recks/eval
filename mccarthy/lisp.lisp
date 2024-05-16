@@ -91,7 +91,7 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
            ;; Yes, Scheme is in both camps. Much like LISP itself.
            ;;
            ;; Almost everything interesting about programming language design in the 20th century can be easily understood as
-           ;; a precursor to LISP or a reaction to LISP, as various programming researchers sought to answer either the question
+           ;; a precursor to LISP or a reaction to LISP, as various programming language researchers sought to answer either the question
            ;; "How can we do what LISP 1.0 did but better?" or "How can we do what LISP 1.5 did but better?"
            ;; Where "better" equals more parsimoniously, in a more principled fashion, providing more expressive
            ;; power to the programmer, more efficiently, etc. etc...
