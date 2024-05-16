@@ -21,12 +21,6 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
 
 (in-package "LISP")
 
-;; "Evalquote is available to the programmer as a LISP function -- thus, one may now write
-;; "(EVALQUOTE APPEND ((A) (B C D)))" rather than
-;; "(EVAL (QUOTE (APPEND (A) (B C D))) NIL)" should one desire so." (96).
-(defmacro evalquote (fn x)
-  `(apply ',fn ',x nil))
-
 (defun apply (fn x a)
   (cl:cond ((cl:atom fn)
             (cl:cond ((cl:eq fn 'car) (cl:caar x))
