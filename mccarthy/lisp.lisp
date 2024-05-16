@@ -63,13 +63,14 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
            ;; Environments in turn are made more usable in LISP 1.5 by the DEFINE "pseudo-function"
            ;; (see the end of this file for more commentary on DEFINE).
            ;; 
-           ;; Furthermore, LABEL is redundant (in the author's opinion) with Scheme's LET, which is not present in LISP 1.5.
+           ;; Furthermore, LABEL provides a redundant subset of the functionality of Scheme's LETREC,
+           ;; which is not present in LISP 1.5.
            ;;
            ;; LISP 1.0 included no mutation, so environments were treated only as expressions, not mutable variables.
            ;; Thus, LABEL was useful for constructing new environment expressions from other environment expressions
            ;; in a purely functional, expression-oriented style.
            ;;
-           ;; The original 1960 LISP was a purely functional language in the modern sense, but as LISP grew in
+           ;; The original LISP 1.0 was a purely functional language in the modern sense, but as LISP grew in
            ;; adoption and relevance it rapidly transformed into a mutable, multi-paradigm language, as we can start to see already
            ;; in the 1.5 version.
            ;;
@@ -80,20 +81,19 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
            ;; Each camp extended various olive branches to the other.
            ;; Notice the stereotypical LISP binary tree style of this historical development ;)
            ;; 
-           ;; These two camps constitute the main axis of early programming language design.
            ;; The first branch in this tree brought us Scheme, ML, Miranda, and Haskell, which embodied more sophisticated versions of LISP 1.0
            ;; purely functional style, while attempting to meet the other camp (i.e. the practical programmer) in the middle with principled and
            ;; constrained approaches to mutability, culminating in Monadic IO.
            ;; 
            ;; The second brought us Scheme, Common LISP, Smalltalk, and then CLOS.
-           ;; TODO: elaborate on what these languages contributed and how they embody the second leaf... I'm too tired to do it right now.
+           ;; TODO: elaborate on what these languages contributed and how they embody the second branch... I'm too tired to do it right now.
            ;;
            ;; Yes, Scheme is in both camps. Much like LISP itself.
            ;;
            ;; Almost everything interesting about programming language design in the 20th century can be easily understood as
            ;; a precursor to LISP or a reaction to LISP, as various programming researchers sought to answer either the question
            ;; "How can we do what LISP 1.0 did but better?" or "How can we do what LISP 1.5 did but better?"
-           ;; Where "better" equals more parsimoniously, in a more principled fashion, more practically, providing more expressive
+           ;; Where "better" equals more parsimoniously, in a more principled fashion, providing more expressive
            ;; power to the programmer, more efficiently, etc. etc...
            ;;
            ;; Here ends the author's diatribe on the profundity of the symbol known as LABEL and its obsolescence in LISP.
