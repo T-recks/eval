@@ -28,14 +28,14 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
             (cl:cond ((cl:eq (cl:car e) 'quote)
                       (cl:cadr e))
                      ((cl:eq (cl:car e) 'cond)
-                      (eval-cons (cl:cdr e) a))
+                      (eval-cond (cl:cdr e) a))
                      (t (apply (cl:car e) (eval-list (cl:cdr e) a) a))))
            (t (apply (cl:car e) (eval-list (cl:cdr e) a) a))))
 
-(defun eval-cons (c a)
+(defun eval-cond (c a)
   (cl:cond ((eval (cl:caar c) a)
             (eval (cl:cadar c) a))
-           (t (eval-cons (cl:cdr c) a))))
+           (t (eval-cond (cl:cdr c) a))))
 
 (defun eval-list (m a)
   (cl:cond ((null m) nil)
@@ -52,52 +52,6 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
                      (t (apply (eval fn a) x a))))
            ((cl:eq (cl:car fn) 'lambda)
             (eval (cl:caddr fn) (pairlist (cl:cadr fn) x a)))
-           ;; Note: this effectively completes the definition of APPLY and the implementation of LISP.
-           ;; The only thing left is the handling of LABEL forms and the author's commentary.
-           ;;
-           ;; LABEL is useless in a practical LISP programming system but included below for completeness.
-           ;; It is essentially a holdover from McCarthy's original 1960 paper defining LISP 1.0, but
-           ;; all sources on LISP 1.5 state that in practice it was not used in user programs (TODO: insert sources here).
-           ;; This was because (in the author's opinion) LABEL is redundant with the addition of mutable environments in LISP 1.5,
-           ;; denoted by the parameter A in this implementation and in the Manual.
-           ;; Environments in turn are made more usable in LISP 1.5 by the DEFINE "pseudo-function"
-           ;; (see the end of this file for more commentary on DEFINE).
-           ;; 
-           ;; Furthermore, LABEL provides a redundant subset of the functionality of Scheme's LETREC,
-           ;; which is not present in LISP 1.5.
-           ;;
-           ;; LISP 1.0 included no mutation, so environments were treated only as expressions, not mutable variables.
-           ;; Thus, LABEL was useful for constructing new environment expressions from other environment expressions
-           ;; in a purely functional, expression-oriented style.
-           ;;
-           ;; The original LISP 1.0 was a purely functional language in the modern sense, but as LISP grew in
-           ;; adoption and relevance it rapidly transformed into a mutable, multi-paradigm language, as we can start to see already
-           ;; in the 1.5 version.
-           ;;
-           ;; This difference between the 1.0 and 1.5 versions of LISP highlights a tension between the two main camps in early language design.
-           ;; The former took its primary inspiration from LISP 1.0 and the Lambda Calculus, focusing on principled, purely functional
-           ;; formalisms while 
-           ;; the latter took its primary inspiration from LISP 1.5, focusing on practical, human-friendly programming systems.
-           ;; Each camp extended various olive branches to the other.
-           ;; Notice the stereotypical LISP binary tree style of this historical development ;)
-           ;; 
-           ;; The first branch in this tree brought us Scheme, ML, Miranda, and Haskell, which embodied more sophisticated versions of LISP 1.0
-           ;; purely functional style, while attempting to meet the other camp (i.e. the practical programmer) in the middle with principled and
-           ;; constrained approaches to mutability, culminating in Monadic IO.
-           ;; 
-           ;; The second brought us Scheme, Common LISP, Smalltalk, and then CLOS.
-           ;; TODO: elaborate on what these languages contributed and how they embody the second branch... I'm too tired to do it right now.
-           ;;
-           ;; Yes, Scheme is in both camps. Much like LISP itself.
-           ;;
-           ;; Almost everything interesting about programming language design in the 20th century can be easily understood as
-           ;; a precursor to LISP or a reaction to LISP, as various programming language researchers sought to answer either the question
-           ;; "How can we do what LISP 1.0 did but better?" or "How can we do what LISP 1.5 did but better?"
-           ;; Where "better" equals more parsimoniously, in a more principled fashion, providing more expressive
-           ;; power to the programmer, more efficiently, etc. etc...
-           ;;
-           ;; Here ends the author's diatribe on the profundity of the symbol known as LABEL and its obsolescence in LISP.
-           ;; Here begins the evaluator's definition of LABEL, the elder fossil of LISP formalisms.
            ((cl:eq (cl:car fn) 'label)
             (apply (cl:caddr fn) x (cl:cons (cl:cons (cl:cadr fn)
                                                      (cl:caddr fn))
@@ -110,7 +64,9 @@ Indeed, the original LISP 1.5 implementation for the PDP-10 used the underlying 
 There's at least one SICP exercise on this topic (e.g. defining CONS, CAR, and CDR as higher order functions)... I'll reference it here later once I bother to find it.
 
 Q: Is not DEFUN a special form? It looks like implementing LISP requires two special forms, not one.
-A: Sort of. DEFUN is used rather like DEFINE would be in LISP 1.5. In the standard LISP 1.5 implementation, there was a default global environment and also a "pseudo-function" DEFINE that added definitions to the global environment. Environments, as you can also see in this LISP implementation, were merely association "lists", constructed by CONS and deconstructed by CAR and CDR.
+A: Sort of. DEFUN is used rather like DEFINE would be in LISP 1.5. In the standard LISP 1.5 implementation, there was a default global environment and also a "pseudo-function" DEFINE that added definitions to the global environment. Functions could be DEFINE'd by associating a symbol with a lambda in the global environment. Environments, as you can also see in this LISP implementation, were merely association "lists", constructed by CONS and deconstructed by CAR and CDR.
 
-Thus, environments and definitions in LISP 1.5 were simple abstractions implemented on top of the CONS, CAR, and CDR primitives, and DEFINE is syntax sugar for manipulating the global/default environment. You can think of DEFUN in this LISP implementation in a similar light.
+Thus, environments and definitions in LISP 1.5 were simple abstractions implemented on top of the CONS, CAR, and CDR primitives, and DEFINE is syntax sugar for manipulating the global/default environment. You can think of DEFUN in this LISP implementation in a similar light. A complete model of LISP could show how to extend the evaluator to support something equivalent to DEFUN, but this would obscure somewhat the important features of the model.
+
+In sum, DEFUN is a convenience making LISP nicer to implement and use in the CL programming environment, but not significant or essential enough to model in LISP:EVAL. This point is demonstrated by the implementation of LISP2 in the file lisp.lisp.lisp, which uses only an environment expression and no special forms from LISP (although it does store this expression in a CL variable for convenient use).
 |#
