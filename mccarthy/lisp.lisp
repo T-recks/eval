@@ -104,14 +104,13 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
                                             a)))))
 
 #|
-Q: Is not Cons a compound data type constructed from Symbols, rather than a primitive data type? ; ;
-A: I'd argue that while the Cons type could be implemented as a compound data type, in LISP 1.5 it is treated as primitive (so we treat it as such in LISP). ; ;
-Indeed, the original LISP 1.5 implementation for the PDP-10 used the underlying machine code equivalents of CAR and CDR as primitive in order to implement Cons types. ; ;
-There's at least one SICP exercise on this topic (e.g. defining CONS, CAR, and CDR as higher order functions)... I'll reference it here later once I bother to find it. ; ;
-                                        ; ;
-Q: Is not DEFUN a special form? It looks like implementing LISP requires two special forms, not one. ; ;
-A: Sort of. DEFUN is used rather like DEFINE would be in LISP 1.5. In the standard LISP 1.5 implementation, there was a default global environment and also a "pseudo-function" DEFINE ; ;
-that added definitions to the global environment. Environments, as you can also see in this LISP implementation, were merely association "lists", constructed by CONS and deconstructed by CAR and CDR. ; ;
-Thus, environments and definitions in LISP 1.5 were simple abstractions implemented on top of the CONS, CAR, and CDR primitives, and DEFINE is syntax sugar for manipulating the global/default environment. ; ;
-You can think of DEFUN in this LISP implementation in a similar light. ; ;
+Q: Is not Cons a compound data type constructed from Symbols, rather than a primitive data type?
+A: I'd argue that while the Cons type could be implemented as a compound data type, in LISP 1.5 it is treated as primitive (so we treat it as such in LISP).
+Indeed, the original LISP 1.5 implementation for the PDP-10 used the underlying machine code equivalents of CAR and CDR as primitive in order to implement Cons types.
+There's at least one SICP exercise on this topic (e.g. defining CONS, CAR, and CDR as higher order functions)... I'll reference it here later once I bother to find it.
+
+Q: Is not DEFUN a special form? It looks like implementing LISP requires two special forms, not one.
+A: Sort of. DEFUN is used rather like DEFINE would be in LISP 1.5. In the standard LISP 1.5 implementation, there was a default global environment and also a "pseudo-function" DEFINE that added definitions to the global environment. Environments, as you can also see in this LISP implementation, were merely association "lists", constructed by CONS and deconstructed by CAR and CDR.
+
+Thus, environments and definitions in LISP 1.5 were simple abstractions implemented on top of the CONS, CAR, and CDR primitives, and DEFINE is syntax sugar for manipulating the global/default environment. You can think of DEFUN in this LISP implementation in a similar light.
 |#
