@@ -21,6 +21,27 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
 
 (in-package "LISP")
 
+(defun eval (e a)
+  (cl:cond ((cl:atom e)
+            (cl:cdr (assoc e a)))
+           ((cl:atom (cl:car e))
+            (cl:cond ((cl:eq (cl:car e) 'quote)
+                      (cl:cadr e))
+                     ((cl:eq (cl:car e) 'cond)
+                      (eval-cons (cl:cdr e) a))
+                     (t (apply (cl:car e) (eval-list (cl:cdr e) a) a))))
+           (t (apply (cl:car e) (eval-list (cl:cdr e) a) a))))
+
+(defun eval-cons (c a)
+  (cl:cond ((eval (cl:caar c) a)
+            (eval (cl:cadar c) a))
+           (t (eval-cons (cl:cdr c) a))))
+
+(defun eval-list (m a)
+  (cl:cond ((null m) nil)
+           (t (cl:cons (eval (cl:car m) a)
+                       (eval-list (cl:cdr m) a)))))
+
 (defun apply (fn x a)
   (cl:cond ((cl:atom fn)
             (cl:cond ((cl:eq fn 'car) (cl:caar x))
@@ -31,8 +52,8 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
                      (t (apply (eval fn a) x a))))
            ((cl:eq (cl:car fn) 'lambda)
             (eval (cl:caddr fn) (pairlist (cl:cadr fn) x a)))
-           ;; Note: this effectively completes the definition of APPLY. The only thing left is handling of LABEL forms.
-           ;; From here, skip to the definition of EVAL to continue understanding LISP. Or read on if you dare...
+           ;; Note: this effectively completes the definition of APPLY and the implementation of LISP.
+           ;; The only thing left is the handling of LABEL forms and the author's commentary.
            ;;
            ;; LABEL is useless in a practical LISP programming system but included below for completeness.
            ;; It is essentially a holdover from McCarthy's original 1960 paper defining LISP 1.0, but
@@ -82,36 +103,15 @@ Wherever the six functions/forms are used to implement LISP, they are prefixed w
                                                      (cl:caddr fn))
                                             a)))))
 
-(defun eval (e a)
-  (cl:cond ((cl:atom e)
-            (cl:cdr (assoc e a)))
-           ((cl:atom (cl:car e))
-            (cl:cond ((cl:eq (cl:car e) 'quote)
-                      (cl:cadr e))
-                     ((cl:eq (cl:car e) 'cond)
-                      (eval-cons (cl:cdr e) a))
-                     (t (apply (cl:car e) (eval-list (cl:cdr e) a) a))))
-           (t (apply (cl:car e) (eval-list (cl:cdr e) a) a))))
-
-(defun eval-cons (c a)
-  (cl:cond ((eval (cl:caar c) a)
-            (eval (cl:cadar c) a))
-           (t (eval-cons (cl:cdr c) a))))
-
-(defun eval-list (m a)
-  (cl:cond ((null m) nil)
-           (t (cl:cons (eval (cl:car m) a)
-                       (eval-list (cl:cdr m) a)))))
-
 #|
-Q: Is not Cons a compound data type constructed from Symbols, rather than a primitive data type?
-A: I'd argue that while the Cons type could be implemented as a compound data type, in LISP 1.5 it is treated as primitive (so we treat it as such in LISP).
-Indeed, the original LISP 1.5 implementation for the PDP-10 used the underlying machine code equivalents of CAR and CDR as primitive in order to implement Cons types.
-There's at least one SICP exercise on this topic (e.g. defining CONS, CAR, and CDR as higher order functions)... I'll reference it here later once I bother to find it.
-
-Q: Is not DEFUN a special form? It looks like implementing LISP requires two special forms, not one.
-A: Sort of. DEFUN is used rather like DEFINE would be in LISP 1.5. In the standard LISP 1.5 implementation, there was a default global environment and also a "pseudo-function" DEFINE
-that added definitions to the global environment. Environments, as you can also see in this LISP implementation, were merely association "lists", constructed by CONS and deconstructed by CAR and CDR.
-Thus, environments and definitions in LISP 1.5 were simple abstractions implemented on top of the CONS, CAR, and CDR primitives, and DEFINE is syntax sugar for manipulating the global/default environment.
-You can think of DEFUN in this LISP implementation in a similar light.
+Q: Is not Cons a compound data type constructed from Symbols, rather than a primitive data type? ; ;
+A: I'd argue that while the Cons type could be implemented as a compound data type, in LISP 1.5 it is treated as primitive (so we treat it as such in LISP). ; ;
+Indeed, the original LISP 1.5 implementation for the PDP-10 used the underlying machine code equivalents of CAR and CDR as primitive in order to implement Cons types. ; ;
+There's at least one SICP exercise on this topic (e.g. defining CONS, CAR, and CDR as higher order functions)... I'll reference it here later once I bother to find it. ; ;
+                                        ; ;
+Q: Is not DEFUN a special form? It looks like implementing LISP requires two special forms, not one. ; ;
+A: Sort of. DEFUN is used rather like DEFINE would be in LISP 1.5. In the standard LISP 1.5 implementation, there was a default global environment and also a "pseudo-function" DEFINE ; ;
+that added definitions to the global environment. Environments, as you can also see in this LISP implementation, were merely association "lists", constructed by CONS and deconstructed by CAR and CDR. ; ;
+Thus, environments and definitions in LISP 1.5 were simple abstractions implemented on top of the CONS, CAR, and CDR primitives, and DEFINE is syntax sugar for manipulating the global/default environment. ; ;
+You can think of DEFUN in this LISP implementation in a similar light. ; ;
 |#
