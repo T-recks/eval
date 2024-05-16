@@ -1,3 +1,4 @@
-- lisp.lisp: LISP in itself
-- aux.lisp: auxilary helper functions
-- programs.lisp: example LISP programs
+- lisp.lisp: implementation of LISP language in Common Lisp
+- aux.lisp: auxilary helper functions for LISP
+- lisp.lisp.lisp: implementation of LISP2 language in LISP
+- programs.lisp: example LISP and LISP2 programs
