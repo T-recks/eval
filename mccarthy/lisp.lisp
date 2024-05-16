@@ -2,7 +2,7 @@
 ;;; Description: This program uses Common Lisp to implement a LISP-1.5-like language (henceforth "LISP").
 
 #|
-"...Lisp in itself. These were “Maxwell’s Equations of Software!” This is the whole world of programming in a few lines that I can put my hand over."
+"...Lisp in itself. These were “Maxwell’s Equations of Software!” This is the whole world of programming in a few lines that I can put my hand over." - Kay
 
 On page 13 of the LISP 1.5 Programmer's Manual, McCarthy implements a complete programming language using only two primitive data types, five primitive functions, and one special form. The two primitive data types are the Symbol and the Cons. The five primitive functions operating on these data types are CAR, CDR, CONS, ATOM, and EQ. The primitive form is COND.
 

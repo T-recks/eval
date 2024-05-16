@@ -1,7 +1,7 @@
 This directory contains a Common Lisp implementation of a Scheme interpreter based on SICP 4.1, excluding extensions and modifications from the exercises.
 
-- Core interpreter structures: core.lisp
+- core.lisp: Core interpreter structures
 - Evaluators
-  - Basic: eval.lisp
-  - Syntax analyzing: analyze.lisp
-- Repl: driver.lisp
+  - eval.lisp: basic evaluator
+  - analyze.lisp: syntax analyzing evaluator
+- driver.lisp: REPL
