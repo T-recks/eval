@@ -79,8 +79,8 @@
                 nil)
               env) ; => T
    (lisp:eval '(eval
-                (quote ((lambda (x y) (dot x y)) (quote a) (quote b)))
+                (quote ((lambda (x y z) (dot x (dot y (dot z nil)))) (quote a) (quote b) (quote c)))
                 nil)
-              env)
+              env) ; => (A B C)
    ))
 
