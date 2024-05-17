@@ -68,5 +68,5 @@ A: Sort of. DEFUN is used rather like DEFINE would be in LISP 1.5. In the standa
 
 Thus, environments and definitions in LISP 1.5 were simple abstractions implemented on top of the CONS, CAR, and CDR primitives, and DEFINE is syntax sugar for manipulating the global/default environment. You can think of DEFUN in this LISP implementation in a similar light. A complete model of LISP could show how to extend the evaluator to support something equivalent to DEFUN, but this would obscure somewhat the important features of the model.
 
-In sum, DEFUN is a convenience making LISP nicer to implement and use in the CL programming environment, but not significant or essential enough to model in LISP:EVAL. This point is demonstrated by the implementation of LISP2 in the file lisp.lisp.lisp, which uses only an environment expression and no special forms from LISP (although it does store this expression in a CL variable for convenient use).
+In sum, DEFUN is a convenience making LISP nicer to implement and use in the CL programming environment, but not significant or essential enough to model in LISP:EVAL. This point is demonstrated by the implementation of LISP2 in the file lisp.lisp.lisp, which uses only an environment expression and no special forms from LISP besides COND.
 |#
